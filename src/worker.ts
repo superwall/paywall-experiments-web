@@ -1,12 +1,13 @@
 import { Hono } from 'hono';
-import { serveStatic } from 'hono/cloudflare-workers';
 import OpenAI from "openai";
 import { EXPERIMENT_PROMPT } from "./prompt";
+import { getAssetFromKV } from '@cloudflare/kv-asset-handler';
 
 // Define environment bindings type
 type Bindings = {
   OPENROUTER_API_KEY: string;
   OPENROUTER_URL: string;
+  __STATIC_CONTENT: KVNamespace;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -188,7 +189,44 @@ app.post('/api/generate', async (c) => {
   }
 });
 
-// Serve static files from the dist folder
-app.get('*', serveStatic({ root: './' }));
+// Serve static files - catch-all route for SPA
+app.get('*', async (c) => {
+  try {
+    // Try to get the asset from KV (Workers Sites)
+    return await getAssetFromKV(
+      {
+        request: c.req.raw,
+        waitUntil: () => {},
+      } as any,
+      {
+        ASSET_NAMESPACE: c.env.__STATIC_CONTENT,
+        ASSET_MANIFEST: {},
+      }
+    );
+  } catch (e) {
+    // If asset not found, serve index.html for SPA routing
+    try {
+      const indexResponse = await getAssetFromKV(
+        {
+          request: new Request(new URL('/index.html', c.req.url)),
+          waitUntil: () => {},
+        } as any,
+        {
+          ASSET_NAMESPACE: c.env.__STATIC_CONTENT,
+          ASSET_MANIFEST: {},
+        }
+      );
+      return new Response(indexResponse.body, {
+        ...indexResponse,
+        headers: {
+          ...Object.fromEntries(indexResponse.headers),
+          'content-type': 'text/html',
+        },
+      });
+    } catch (error) {
+      return c.text('Not found', 404);
+    }
+  }
+});
 
 export default app;

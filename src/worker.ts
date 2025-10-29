@@ -1,13 +1,12 @@
 import { Hono } from 'hono';
 import OpenAI from "openai";
 import { EXPERIMENT_PROMPT } from "./prompt";
-import { getAssetFromKV } from '@cloudflare/kv-asset-handler';
 
 // Define environment bindings type
 type Bindings = {
   OPENROUTER_API_KEY: string;
   OPENROUTER_URL: string;
-  __STATIC_CONTENT: KVNamespace;
+  ASSETS: Fetcher;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -191,43 +190,22 @@ app.post('/api/generate', async (c) => {
 
 // Serve static files - catch-all route for SPA
 app.get('*', async (c) => {
-  try {
-    // Try to get the asset from KV (Workers Sites)
-    const asset = await getAssetFromKV(
-      {
-        request: c.req.raw,
-        waitUntil: () => {},
-      } as any,
-      {
-        ASSET_NAMESPACE: c.env.__STATIC_CONTENT,
-      }
-    );
-    return asset;
-  } catch (e) {
-    console.error('[Worker] Asset not found, trying index.html:', e);
-    // If asset not found, serve index.html for SPA routing
-    try {
-      const indexAsset = await getAssetFromKV(
-        {
-          request: new Request(new URL('/index.html', c.req.url)),
-          waitUntil: () => {},
-        } as any,
-        {
-          ASSET_NAMESPACE: c.env.__STATIC_CONTENT,
-        }
-      );
-      return new Response(indexAsset.body, {
-        ...indexAsset,
-        headers: {
-          ...Object.fromEntries(indexAsset.headers),
-          'content-type': 'text/html',
-        },
-      });
-    } catch (error) {
-      console.error('[Worker] Failed to serve index.html:', error);
-      return c.text(`Not found: ${c.req.url}. Error: ${error}`, 404);
-    }
+  // Use the modern Assets binding to serve static files
+  const response = await c.env.ASSETS.fetch(c.req.raw);
+
+  // If asset not found (404), serve index.html for SPA routing
+  if (response.status === 404) {
+    const indexResponse = await c.env.ASSETS.fetch(new Request(new URL('/index.html', c.req.url)));
+    return new Response(indexResponse.body, {
+      ...indexResponse,
+      headers: {
+        ...Object.fromEntries(indexResponse.headers),
+        'content-type': 'text/html',
+      },
+    });
   }
+
+  return response;
 });
 
 export default app;

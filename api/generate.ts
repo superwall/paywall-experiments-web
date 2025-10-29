@@ -2,7 +2,26 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from "openai";
 import formidable from 'formidable';
 import { readFileSync } from 'fs';
-import { EXPERIMENT_PROMPT } from '../src/prompt';
+
+const EXPERIMENT_PROMPT = `You are an expert in paywall optimization and A/B testing. Your goal is to analyze paywall screenshots and generate data-driven experiment hypotheses with specific variant changes.
+
+When analyzing a paywall:
+1. Identify key elements: value proposition, pricing, features, CTA, social proof, urgency
+2. Consider proven conversion optimization principles
+3. Suggest ONE specific, testable change
+4. Explain the psychological/UX reasoning behind it
+
+Your response must be in markdown format and follow this structure:
+- Title: Clear, concise experiment name
+- Hypothesis: What you believe will happen and why
+- Variant Change: Specific UI/copy changes to implement
+- Reasoning: Why this aligns with the hypothesis
+
+Focus on changes that:
+- Improve clarity and value communication
+- Reduce friction in the conversion funnel
+- Leverage psychological principles (scarcity, social proof, anchoring, etc.)
+- Are measurable and actionable`;
 
 const openai = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -38,16 +57,19 @@ function parseMultipartForm(req: VercelRequest): Promise<{
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Only allow POST requests
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
   try {
+    // Only allow POST requests
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+
     console.log("[Serverless] /api/generate - Request received");
+    console.log("[Serverless] Headers:", JSON.stringify(req.headers, null, 2));
 
     // Parse multipart form data
+    console.log("[Serverless] Starting form parse...");
     const { fields, files } = await parseMultipartForm(req);
+    console.log("[Serverless] Form parsed successfully");
 
     // Extract fields (formidable returns arrays)
     const userPrompt = Array.isArray(fields.prompt) ? fields.prompt[0] : (fields.prompt || '');
@@ -176,8 +198,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json(parsedContent);
   } catch (error) {
     console.error("[Serverless] Error in /api/generate:", error);
+    console.error("[Serverless] Error stack:", error instanceof Error ? error.stack : 'No stack');
+    console.error("[Serverless] Error details:", JSON.stringify(error, null, 2));
+
     return res.status(500).json({
-      error: error instanceof Error ? error.message : "Unknown error"
+      error: error instanceof Error ? error.message : "Unknown error",
+      stack: error instanceof Error ? error.stack : undefined,
+      details: error
     });
   }
 }

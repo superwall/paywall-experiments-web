@@ -193,38 +193,39 @@ app.post('/api/generate', async (c) => {
 app.get('*', async (c) => {
   try {
     // Try to get the asset from KV (Workers Sites)
-    return await getAssetFromKV(
+    const asset = await getAssetFromKV(
       {
         request: c.req.raw,
         waitUntil: () => {},
       } as any,
       {
         ASSET_NAMESPACE: c.env.__STATIC_CONTENT,
-        ASSET_MANIFEST: {},
       }
     );
+    return asset;
   } catch (e) {
+    console.error('[Worker] Asset not found, trying index.html:', e);
     // If asset not found, serve index.html for SPA routing
     try {
-      const indexResponse = await getAssetFromKV(
+      const indexAsset = await getAssetFromKV(
         {
           request: new Request(new URL('/index.html', c.req.url)),
           waitUntil: () => {},
         } as any,
         {
           ASSET_NAMESPACE: c.env.__STATIC_CONTENT,
-          ASSET_MANIFEST: {},
         }
       );
-      return new Response(indexResponse.body, {
-        ...indexResponse,
+      return new Response(indexAsset.body, {
+        ...indexAsset,
         headers: {
-          ...Object.fromEntries(indexResponse.headers),
+          ...Object.fromEntries(indexAsset.headers),
           'content-type': 'text/html',
         },
       });
     } catch (error) {
-      return c.text('Not found', 404);
+      console.error('[Worker] Failed to serve index.html:', error);
+      return c.text(`Not found: ${c.req.url}. Error: ${error}`, 404);
     }
   }
 });

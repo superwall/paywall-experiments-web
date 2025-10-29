@@ -1,8 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from "openai";
 import Busboy from 'busboy';
-import { Readable } from 'stream';
-import { EXPERIMENT_PROMPT } from '@/prompt';
+import { EXPERIMENT_PROMPT } from '../src/prompt';
 
 
 const openai = new OpenAI({

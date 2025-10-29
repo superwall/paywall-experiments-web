@@ -8,7 +8,7 @@
     "start": "wrangler dev",
     "build": "bun run frontend-build.ts",
     "build:frontend": "bun run frontend-build.ts",
-    "deploy": "wrangler deploy"
+    "deploy": "bun run build && wrangler deploy"
   },
   "dependencies": {
     "@cloudflare/kv-asset-handler": "^0.4.0",

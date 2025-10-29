@@ -6,7 +6,9 @@ import { EXPERIMENT_PROMPT } from "./prompt";
 type Bindings = {
   OPENROUTER_API_KEY: string;
   OPENROUTER_URL: string;
-  ASSETS: Fetcher;
+  ASSETS: {
+    fetch: (request: Request) => Promise<Response>;
+  };
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -16,7 +18,7 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   let binary = '';
   for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
+    binary += String.fromCharCode(bytes[i]!);
   }
   return btoa(binary);
 }
@@ -196,12 +198,13 @@ app.get('*', async (c) => {
   // If asset not found (404), serve index.html for SPA routing
   if (response.status === 404) {
     const indexResponse = await c.env.ASSETS.fetch(new Request(new URL('/index.html', c.req.url)));
+    const headers = new Headers(indexResponse.headers);
+    headers.set('content-type', 'text/html');
+
     return new Response(indexResponse.body, {
-      ...indexResponse,
-      headers: {
-        ...Object.fromEntries(indexResponse.headers),
-        'content-type': 'text/html',
-      },
+      status: indexResponse.status,
+      statusText: indexResponse.statusText,
+      headers,
     });
   }
 

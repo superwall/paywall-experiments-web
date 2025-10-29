@@ -1,1 +1,0 @@
-This folder contains the built output assets for the worker "paywall-experiments-web" generated at 2025-10-29T22:03:21.863Z.

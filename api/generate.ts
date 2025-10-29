@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from "openai";
-import Busboy from 'busboy';
+import formidable from 'formidable';
+import { readFileSync } from 'fs';
 import { EXPERIMENT_PROMPT } from '../src/prompt';
-
 
 const openai = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -16,47 +16,24 @@ export const config = {
   },
 };
 
-function parseMultipartForm(req: any): Promise<{
-  fields: Record<string, string>;
-  files: Array<{ data: Buffer; mimeType: string; filename: string }>;
+function parseMultipartForm(req: VercelRequest): Promise<{
+  fields: Record<string, string | string[]>;
+  files: formidable.Files;
 }> {
   return new Promise((resolve, reject) => {
-    const busboy = Busboy({ headers: req.headers });
-    const fields: Record<string, string> = {};
-    const files: Array<{ data: Buffer; mimeType: string; filename: string }> = [];
-
-    busboy.on('field', (fieldname, val) => {
-      fields[fieldname] = val;
+    const form = formidable({
+      maxFileSize: 10 * 1024 * 1024, // 10MB
+      keepExtensions: true,
     });
 
-    busboy.on('file', (fieldname, file, info) => {
-      const { filename, mimeType } = info;
-      const chunks: Buffer[] = [];
-
-      file.on('data', (data) => {
-        chunks.push(data);
-      });
-
-      file.on('end', () => {
-        files.push({
-          data: Buffer.concat(chunks),
-          mimeType,
-          filename,
-        });
-      });
-    });
-
-    busboy.on('finish', () => {
+    form.parse(req as any, (err, fields, files) => {
+      if (err) {
+        console.error('[Serverless] Formidable error:', err);
+        reject(err);
+        return;
+      }
       resolve({ fields, files });
     });
-
-    busboy.on('error', (error) => {
-      console.error('[Serverless] Busboy error:', error);
-      reject(error);
-    });
-
-    // Pipe the request directly to busboy
-    req.pipe(busboy);
   });
 }
 
@@ -71,12 +48,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Parse multipart form data
     const { fields, files } = await parseMultipartForm(req);
-    const userPrompt = fields.prompt || '';
-    const imageUrlsJson = fields.imageUrls || null;
-    const imageUrls: string[] = imageUrlsJson ? JSON.parse(imageUrlsJson) : [];
+
+    // Extract fields (formidable returns arrays)
+    const userPrompt = Array.isArray(fields.prompt) ? fields.prompt[0] : (fields.prompt || '');
+    const imageUrlsJson = Array.isArray(fields.imageUrls) ? fields.imageUrls[0] : (fields.imageUrls || null);
+    const imageUrls: string[] = imageUrlsJson ? JSON.parse(imageUrlsJson as string) : [];
+
+    // Get uploaded files
+    const uploadedFiles: formidable.File[] = [];
+    for (let i = 0; i < 5; i++) {
+      const fileKey = `image${i}`;
+      const fileData = files[fileKey];
+      if (fileData) {
+        const fileArray = Array.isArray(fileData) ? fileData : [fileData];
+        uploadedFiles.push(...fileArray);
+      }
+    }
 
     console.log("[Serverless] Prompt:", userPrompt);
-    console.log("[Serverless] Number of file images:", files.length);
+    console.log("[Serverless] Number of file images:", uploadedFiles.length);
     console.log("[Serverless] Number of URL images:", imageUrls.length);
 
     // Build the content array
@@ -91,15 +81,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Add file images
-    for (const file of files) {
-      const base64 = file.data.toString('base64');
+    for (const file of uploadedFiles) {
+      const fileBuffer = readFileSync(file.filepath);
+      const base64 = fileBuffer.toString('base64');
+      const mimeType = file.mimetype || 'image/jpeg';
+
       content.push({
         type: "image_url",
         image_url: {
-          url: `data:${file.mimeType};base64,${base64}`
+          url: `data:${mimeType};base64,${base64}`
         }
       });
-      console.log("[Serverless] Added file image to content, type:", file.mimeType);
+      console.log("[Serverless] Added file image to content, type:", mimeType);
     }
 
     // Add URL images directly

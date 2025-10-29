@@ -2,26 +2,8 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import OpenAI from "openai";
 import Busboy from 'busboy';
 import { Readable } from 'stream';
+import { EXPERIMENT_PROMPT } from '@/prompt';
 
-const EXPERIMENT_PROMPT = `You are an expert in paywall optimization and A/B testing. Your goal is to analyze paywall screenshots and generate data-driven experiment hypotheses with specific variant changes.
-
-When analyzing a paywall:
-1. Identify key elements: value proposition, pricing, features, CTA, social proof, urgency
-2. Consider proven conversion optimization principles
-3. Suggest ONE specific, testable change
-4. Explain the psychological/UX reasoning behind it
-
-Your response must be in markdown format and follow this structure:
-- Title: Clear, concise experiment name
-- Hypothesis: What you believe will happen and why
-- Variant Change: Specific UI/copy changes to implement
-- Reasoning: Why this aligns with the hypothesis
-
-Focus on changes that:
-- Improve clarity and value communication
-- Reduce friction in the conversion funnel
-- Leverage psychological principles (scarcity, social proof, anchoring, etc.)
-- Are measurable and actionable`;
 
 const openai = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -35,12 +17,12 @@ export const config = {
   },
 };
 
-function parseMultipartForm(req: VercelRequest): Promise<{
+function parseMultipartForm(req: any): Promise<{
   fields: Record<string, string>;
   files: Array<{ data: Buffer; mimeType: string; filename: string }>;
 }> {
   return new Promise((resolve, reject) => {
-    const busboy = Busboy({ headers: req.headers as any });
+    const busboy = Busboy({ headers: req.headers });
     const fields: Record<string, string> = {};
     const files: Array<{ data: Buffer; mimeType: string; filename: string }> = [];
 
@@ -49,7 +31,7 @@ function parseMultipartForm(req: VercelRequest): Promise<{
     });
 
     busboy.on('file', (fieldname, file, info) => {
-      const { filename, encoding, mimeType } = info;
+      const { filename, mimeType } = info;
       const chunks: Buffer[] = [];
 
       file.on('data', (data) => {
@@ -69,14 +51,13 @@ function parseMultipartForm(req: VercelRequest): Promise<{
       resolve({ fields, files });
     });
 
-    busboy.on('error', reject);
+    busboy.on('error', (error) => {
+      console.error('[Serverless] Busboy error:', error);
+      reject(error);
+    });
 
-    if (req.body instanceof Readable) {
-      req.body.pipe(busboy);
-    } else {
-      const readable = Readable.from(Buffer.from(req.body as any));
-      readable.pipe(busboy);
-    }
+    // Pipe the request directly to busboy
+    req.pipe(busboy);
   });
 }
 

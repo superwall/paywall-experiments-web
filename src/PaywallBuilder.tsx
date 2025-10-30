@@ -59,20 +59,32 @@ export function PaywallBuilder() {
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [experimentData, setExperimentData] = useState<{
-    title: string;
-    hypothesis: string;
-    variant: {
-      change: string;
-      reasoning: string;
-    };
-  } | null>(null);
+  const [generatedOutput, setGeneratedOutput] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Check for debug mode
+  const isDebugMode = useMemo(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('debug') === 'true';
+    }
+    return false;
+  }, []);
 
   // Shuffle examples on mount
   const shuffledExamples = useMemo(() => {
     return [...EXAMPLES].sort(() => Math.random() - 0.5);
   }, []);
+
+  // Memoize markdown components to prevent re-render loop
+  const markdownComponents = useMemo(() => ({
+    h1: () => null, // Hide H1 since we show it in the title
+    h2: ({node, ...props}: any) => <h2 className="text-slate-400 text-lg font-medium uppercase tracking-wider py-2" {...props} />,
+    h3: ({node, ...props}: any) => <h3 className="text-slate-400 text-md font-medium uppercase tracking-wider py-2" {...props} />,
+    h4: ({node, ...props}: any) => <h4 className="text-slate-400 text-md font-normal uppercase tracking-wider py-2" {...props} />,
+    h5: ({node, ...props}: any) => <h5 className="text-slate-400 text-md font-normal uppercase tracking-wider py-2" {...props} />,
+    h6: ({node, ...props}: any) => <h6 className="text-slate-400 text-md font-normal uppercase tracking-wider py-2" {...props} />,
+    p: ({node, ...props}: any) => <p className="text-slate-900 text-lg mb-4" {...props} />,
+  }), []);
 
   const loadingMessages = [
     "Analyzing...",
@@ -152,7 +164,7 @@ export function PaywallBuilder() {
     console.log("[Frontend] Number of images:", uploadedImages.length);
 
     setIsLoading(true);
-    setExperimentData(null);
+    setGeneratedOutput(null);
 
     try {
       const formData = new FormData();
@@ -198,9 +210,9 @@ export function PaywallBuilder() {
         throw new Error(data.error);
       }
 
-      if (data.title && data.hypothesis && data.variant) {
-        console.log("[Frontend] Setting experiment data");
-        setExperimentData(data);
+      if (data.generatedOutput) {
+        console.log("[Frontend] Setting generated output");
+        setGeneratedOutput(data.generatedOutput);
       }
     } catch (error) {
       console.error("[Frontend] Error generating paywall:", error);
@@ -227,16 +239,96 @@ export function PaywallBuilder() {
   };
 
   const handleGenerateAnother = () => {
-    setExperimentData(null);
+    setGeneratedOutput(null);
     setPrompt("");
     setUploadedImages([]);
     setImagePreviews([]);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleDebugMarkdown = () => {
+    const testMarkdown = `# Markdown Test Experiment
+
+## Hypothesis
+
+We believe that testing **all markdown elements** will help us validate the *rendering system* and ensure proper formatting across different **heading levels** and *nested structures*.
+
+This paragraph demonstrates **bold text**, *italic text*, and ***bold italic text*** all working together.
+
+### Third Level Heading
+
+Here's an unordered list with some nested elements:
+
+- First item with **bold text**
+- Second item with *italic text*
+  - Nested item level 1
+  - Nested item level 2 with ***bold italic***
+    - Deeply nested item
+    - Another deeply nested item with **emphasis**
+- Third item back at top level
+
+#### Fourth Level Heading
+
+Now let's test an ordered list:
+
+1. First ordered item
+2. Second ordered item with **bold**
+   1. Nested ordered item
+   2. Another nested item with *italic*
+      1. Triple nested item
+      2. Triple nested with ***bold italic***
+3. Back to top level
+
+##### Fifth Level Heading
+
+Complex nested lists combining ordered and unordered:
+
+- Unordered parent
+  1. Ordered child with **bold**
+  2. Another ordered child
+     - Unordered grandchild
+     - Another unordered grandchild with *emphasis*
+- Back to unordered parent level
+
+###### Sixth Level Heading
+
+This is the smallest heading level, demonstrating all six heading types work correctly.
+
+## Variant
+
+The variant should include:
+
+- **Primary changes**: Update all heading styles to use consistent typography
+- **Secondary changes**: Ensure proper spacing between elements
+  - Add *generous padding* between sections
+  - Implement **color-coded headings** for better hierarchy
+    - Test nested emphasis combinations
+    - Validate ***bold italic*** rendering in deep nests
+
+## Reasoning
+
+Testing comprehensive markdown ensures:
+
+1. **Visual hierarchy** is maintained across all heading levels
+2. *Text emphasis* works correctly in all contexts
+   1. Including **nested lists**
+   2. With ***combined formatting***
+3. List nesting doesn't break styling
+
+Additional considerations:
+
+- Lists should maintain proper indentation
+  - Even at *deep nesting levels*
+    - Like this ***third level***
+- Text formatting should work in lists
+- Both ordered and unordered lists should render correctly`;
+
+    setGeneratedOutput(testMarkdown);
+  };
+
   return (
     <div
-      className="min-h-screen bg-slate-50 flex flex-col items-center justify-between md:pt-[100px] p-4 pb-0 relative"
+      className="min-h-screen bg-slate-50 flex flex-col items-center justify-between pt-[64px] md:pt-[100px] p-4 pb-0 relative"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -256,7 +348,7 @@ export function PaywallBuilder() {
         {/* Header */}
         <div className="text-center mb-12">
           {/* Show uploaded images while loading */}
-          {(isLoading || experimentData) && imagePreviews.length > 0 && (
+          {(isLoading || generatedOutput) && imagePreviews.length > 0 && (
             <div className={`${isLoading ? 'animate-pulse' : ''} flex justify-center gap-2 mb-10 flex-wrap relative`}>
               {imagePreviews.map((preview, index) => (
                 <img
@@ -285,7 +377,7 @@ export function PaywallBuilder() {
               disabled={false}
               speed={2}
               className="text-4xl mt-4"
-            /> : experimentData ? experimentData.title : "Design a Paywall Experiment" }
+            /> : generatedOutput ? (generatedOutput.trim().split('\n')[0] || "Your Results").replace(/^#\s*/, '') : "Design a Paywall Experiment" }
           </h1>
     
         {!isLoading && (
@@ -296,48 +388,21 @@ export function PaywallBuilder() {
         </div>
 
         {/* Response Display */}
-        {experimentData && (
+        {generatedOutput && (
           <div className="mb-14 space-y-4">
             {/* Experiment Data */}
             <div className="!px-2 !pt-1 w-full bg-transparent text-slate-900 placeholder-slate-400 border-0 shadow-none resize-none text-lg mb-1 focus-visible:ring-0 min-h-20">
-          
-
-              {/* Hypothesis */}
-              <div>
-                <h4 className="text-slate-400 text-sm font-medium uppercase tracking-wider py-2">
-                  Superwall's Hypothesis
-                </h4>
-                <div className="text-slate-900 text-lg prose prose-slate max-w-none prose-ul:list-disc prose-ul:pl-5 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-1">
-                  <Markdown>{experimentData.hypothesis}</Markdown>
-                </div>
-              </div>
-
-              <div>
-                <h4 className="text-slate-400 text-sm font-medium uppercase tracking-wider py-2">
-                  Variant
-                </h4>
-                <div className="text-slate-900 text-lg prose prose-slate max-w-none prose-ul:list-disc prose-ul:pl-5 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-1">
-                  <Markdown>{experimentData.variant.change}</Markdown>
-                </div>
-              </div>
-
-
-              <div>
-                <h4 className="text-slate-400 text-sm font-medium uppercase tracking-wider py-2">
-                  Reasoning
-                </h4>
-                <div className="text-slate-900 text-lg prose prose-slate max-w-none prose-ul:list-disc prose-ul:pl-5 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-1">
-                  <Markdown>{experimentData.variant.reasoning}</Markdown>
-                </div>
+              <div className="prose prose-slate max-w-none prose-ul:list-disc prose-ul:pl-5 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-1">
+                <Markdown components={markdownComponents}>
+                  {generatedOutput}
+                </Markdown>
               </div>
             </div>
-
-            
           </div>
         )}
 
         {/* Input Box */}
-        {!isLoading && !experimentData && (
+        {!isLoading && !generatedOutput && (
           <div className="bg-white rounded-2xl border border-[0.5px] border-slate-200 p-3 shadow-lg shadow-slate-200/40">
           {/* Image Previews */}
           {imagePreviews.length > 0 && (
@@ -398,6 +463,18 @@ export function PaywallBuilder() {
                 </label>
               </Button>
 
+              {/* Debug Button */}
+              {isDebugMode && (
+                <Button
+                  onClick={handleDebugMarkdown}
+                  variant="ghost"
+                  size="sm"
+                  className="bg-purple-100 hover:bg-purple-200 text-purple-700 hover:text-purple-900"
+                >
+                  Test Markdown
+                </Button>
+              )}
+
             </div>
 
 
@@ -427,7 +504,7 @@ export function PaywallBuilder() {
       }
 
 {/* CTAs */}
-            { !isLoading && experimentData && <div className="text-center w-full flex flex-col items-center justify-center mt-12 mb-24 px-4">
+            { !isLoading && generatedOutput && <div className="text-center w-full flex flex-col items-center justify-center mt-12 mb-24 px-4">
               
               <h2 className="text-3xl py-6 md:text-5xl font-bold max-w-[800px] w-full">It doesn't have to be a guessing game – launch this today.</h2>
               
@@ -455,7 +532,7 @@ export function PaywallBuilder() {
       {/* Examples Footer */}
       {!isLoading && (
         <div className="bottom-0 left-0 right-0 bg-slate-50 pb-0 h-[240px] md:h-[400px] flex flex-col items-center justify-end ">
-        <div className="md:pt-[120px] h-[180px] md:!h-[300px] md:hover:!h-[350px] ease-out !duration-[500ms] transition-all overflow-hidden !w-[100vw]">
+        <div className=" md:pt-[120px] h-[180px] md:!h-[300px] md:hover:!h-[350px] ease-out !duration-[500ms] transition-all overflow-hidden !w-[95vw]">
           <div className="max-w-3xl mx-auto pt-32 scale-[60%] md:scale-100">
             {/* Fan-out cards container */}
             <div className="relative h-64 flex items-end justify-center">

@@ -84,6 +84,14 @@ export function PaywallBuilder() {
   ];
   const typingText = useTypingEffect(loadingMessages, 20, 20, 3000);
 
+  const placeholderTexts = [
+    "How can I update this paywall to increase ARPU?",
+    "Based on your finding, which elements should be changed?",
+    "What changes would you suggest to improve conversions?",
+    "What modifications could reduce trial abandonment here?"
+  ];
+  const placeholderText = useTypingEffect(placeholderTexts, 20, 20, 4000);
+
   const processFiles = (files: File[]) => {
     const availableSlots = MAX_IMAGES - uploadedImages.length;
     const filesToAdd = files.slice(0, availableSlots);
@@ -359,7 +367,7 @@ export function PaywallBuilder() {
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="For AI to create a paywall for my..."
+            placeholder={placeholderText}
             className="!px-2 !pt-1 w-full bg-transparent text-slate-900 placeholder-slate-400 border-0 shadow-none resize-none text-lg mb-1 focus-visible:ring-0 min-h-20"
             disabled={isLoading}
           />

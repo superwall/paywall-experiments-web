@@ -116,6 +116,18 @@ export function PaywallBuilder() {
   const handleSubmit = async () => {
     if (!prompt.trim() && uploadedImages.length === 0) return;
 
+    // Track generation begin
+    if (posthog) {
+      const email = getEmail();
+      const imageCount = uploadedImages.length;
+      
+      posthog.capture(POSTHOG_EVENTS.GENERATION_BEGIN, {
+        prompt: prompt || '',
+        image_count: imageCount,
+        has_email: !!email,
+      });
+    }
+
     // Scroll to top
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
@@ -210,7 +222,16 @@ export function PaywallBuilder() {
     }
   };
 
-  const handleExampleClick = (example: { prompt: string; image: string }) => {
+  const handleExampleClick = (example: { id: number; title: string; prompt: string; image: string }) => {
+    // Track example clicked
+    if (posthog) {
+      posthog.capture(POSTHOG_EVENTS.EXAMPLE_CLICKED, {
+        example_id: example.id,
+        example_title: example.title,
+        example_prompt: example.prompt,
+      });
+    }
+    
     setPrompt(example.prompt);
     // Replace all images with the example image
     setUploadedImages([example.image]);
@@ -221,7 +242,7 @@ export function PaywallBuilder() {
 
   return (
     <div
-      className="min-h-screen overflow-hidden bg-slate-50 flex flex-col items-center justify-between pt-[64px] md:pt-[100px] pb-0 relative"
+      className={`min-h-screen overflow-hidden bg-slate-50 flex flex-col items-center justify-between pt-[64px] ${!isLoading ? 'md:pt-[100px]' : ''} transition-all duration-300 ease-out  pb-0 relative`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -261,7 +282,7 @@ export function PaywallBuilder() {
             </div>
           )}
 
-          <h1 className="text-4xl md:text-5xl font-bold text-slate-900 mb-3 w-full min-h-[58px] px-4">
+          <h1 className="whitespace-normal md:whitespace-nowrap text-4xl md:text-5xl font-bold text-slate-900 mb-3 w-full min-h-[58px] px-4 md:px-2">
             {isLoading ? (
               <ShinyText
                 text={typingText}
@@ -273,10 +294,16 @@ export function PaywallBuilder() {
               "AI Powered Paywall Experiments"
             )}
           </h1>
+          
+          {isLoading && (
+            <p className="text-xs text-slate-900/50 px-4">
+              Typically ~30s or less...
+            </p>
+          )}
     
           {!isLoading && (
             <p className="text-slate-600 md:text-lg px-4">
-              Based on 1,824 lessons from 422 unique experiments run by <a className="text-brand-primary cursor-pointer underline " href="https://superwall.com">Superwall.com</a>
+              Based on 1,824 lessons from 422 unique experiments run by <a className="text-brand-primary cursor-pointer underline " href="https://superwall.com?ref=paywallexperiments" target="_blank" rel="noopener noreferrer">Superwall.com</a>
             </p>
           )}
         </div>
@@ -366,7 +393,7 @@ export function PaywallBuilder() {
         </div>
       </div>
 
-      {isLoading && <div className="h-[15vh]"></div>}
+      {isLoading && <div className=""></div>}
 
       {/* Examples Footer */}
       {!isLoading && <ExamplesFooter onExampleClick={handleExampleClick} />}

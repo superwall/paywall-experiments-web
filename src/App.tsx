@@ -1,5 +1,6 @@
 import "./index.css";
 import { BrowserRouter as Router, Routes, Route, useParams } from "react-router-dom";
+import { HelmetProvider } from "react-helmet-async";
 import { PaywallBuilder } from "./PaywallBuilder";
 import { ResultPage } from "./ResultPage";
 
@@ -17,12 +18,14 @@ function ResultRoute() {
 
 export function App() {
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<PaywallBuilder />} />
-        <Route path="/r/:slug" element={<ResultRoute />} />
-      </Routes>
-    </Router>
+    <HelmetProvider>
+      <Router>
+        <Routes>
+          <Route path="/" element={<PaywallBuilder />} />
+          <Route path="/r/:slug" element={<ResultRoute />} />
+        </Routes>
+      </Router>
+    </HelmetProvider>
   );
 }
 

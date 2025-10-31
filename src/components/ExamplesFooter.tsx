@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { usePostHogTracking, POSTHOG_EVENTS } from "../utils/posthog";
 
 const EXAMPLES = [
   {
@@ -52,6 +53,7 @@ interface ExamplesFooterProps {
 
 export function ExamplesFooter({ onExampleClick }: ExamplesFooterProps) {
   const navigate = useNavigate();
+  const posthog = usePostHogTracking();
 
   // Shuffle examples on mount
   const shuffledExamples = useMemo(() => {
@@ -59,6 +61,16 @@ export function ExamplesFooter({ onExampleClick }: ExamplesFooterProps) {
   }, []);
 
   const handleExampleClick = (example: typeof EXAMPLES[0]) => {
+    // Track example clicked only if no custom handler is provided
+    // (when using default navigation behavior)
+    if (!onExampleClick && posthog) {
+      posthog.capture(POSTHOG_EVENTS.EXAMPLE_CLICKED, {
+        example_id: example.id,
+        example_title: example.title,
+        example_prompt: example.prompt,
+      });
+    }
+    
     if (onExampleClick) {
       onExampleClick(example);
     } else {
@@ -69,7 +81,7 @@ export function ExamplesFooter({ onExampleClick }: ExamplesFooterProps) {
 
   return (
     <div className="w-full bg-slate-50 pb-0 h-[240px] md:h-[400px] flex flex-col items-center justify-end">
-      <div className="md:pt-[120px] h-[180px] md:!h-[300px] md:hover:!h-[350px] ease-out !duration-[500ms] transition-all overflow-hidden w-full ">
+      <div className="md:pt-[120px] h-[180px] md:!h-[300px] md:hover:!h-[330px] ease-out !duration-[500ms] transition-all overflow-hidden w-full ">
         <div className="max-w-3xl mx-auto pt-32 scale-[60%] md:scale-100">
           {/* Fan-out cards container */}
           <div className="relative h-64 flex items-end justify-center">
@@ -91,7 +103,7 @@ export function ExamplesFooter({ onExampleClick }: ExamplesFooterProps) {
                 <button
                   key={example.id}
                   onClick={() => handleExampleClick(example)}
-                  className="absolute bottom-0 w-56 rounded-t-xl bg-white shadow-md overflow-hidden transition-all duration-300 hover:scale-105 cursor-pointer group"
+                  className="absolute bottom-0 w-56 rounded-t-xl bg-white shadow-md overflow-hidden transition-all duration-300 hover:scale-[1.03] origin-bottom cursor-pointer group"
                   style={{
                     transform: `rotate(${style?.rotate}deg) translateY(${style?.translateY}px)`,
                     left: `calc(50% - 112px + ${style?.left}px)`,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import plugin from "bun-plugin-tailwind";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, writeFileSync, copyFileSync, existsSync } from "fs";
 
 console.log("🏗️  Building frontend...\n");
 
@@ -23,6 +23,26 @@ if (!result.success) {
 
 console.log("✅ Build completed successfully\n");
 console.log(`📦 Generated ${result.outputs.length} files`);
+
+// Copy OG image if it exists
+const ogImagePath = "src/og-image.png";
+const ogImageDest = "dist/og-image.png";
+if (existsSync(ogImagePath)) {
+  copyFileSync(ogImagePath, ogImageDest);
+  console.log("✅ Copied OG image to dist");
+} else {
+  console.log("⚠️  Warning: og-image.png not found in src folder");
+}
+
+// Copy OG result image if it exists
+const ogResultImagePath = "src/og-result-image.png";
+const ogResultImageDest = "dist/og-result-image.png";
+if (existsSync(ogResultImagePath)) {
+  copyFileSync(ogResultImagePath, ogResultImageDest);
+  console.log("✅ Copied OG result image to dist");
+} else {
+  console.log("⚠️  Warning: og-result-image.png not found in src folder");
+}
 
 // Fix asset paths in index.html to use absolute paths instead of relative
 // This prevents issues when serving from sub-routes like /r/slug

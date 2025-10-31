@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { Helmet } from "react-helmet-async";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ArrowRight, Loader2, Redo, Redo2, RefreshCcw, RotateCcw, Share2, Undo, UnlockIcon } from "lucide-react";
@@ -305,8 +306,34 @@ export function ResultPage({ slug }: ResultPageProps) {
     ? result.generatedOutput.substring(0, 500) + "..."
     : result.generatedOutput;
 
+  // Create description from prompt or first paragraph of generated output
+  const description = result.prompt 
+    ? `Check out this AI-generated paywall experiment: ${result.prompt.substring(0, 100)}...`
+    : `AI-generated paywall experiment based on 1,824 lessons from 422 unique experiments run by Superwall.com`;
+  
+  const currentUrl = `https://paywallexperiments.com/r/${slug}`;
+
   return (
-    <div className="min-h-screen bg-slate-50 pt-12 md:pt-32">
+    <>
+      <Helmet>
+        <title>{title} - AI Paywall Experiments</title>
+        
+        {/* Open Graph / Facebook */}
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content={currentUrl} />
+        <meta property="og:title" content={`${title} - AI Paywall Experiments`} />
+        <meta property="og:description" content={description} />
+        <meta property="og:image" content="https://paywallexperiments.com/og-result-image.png" />
+        
+        {/* Twitter */}
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:url" content={currentUrl} />
+        <meta name="twitter:title" content={`${title} - AI Paywall Experiments`} />
+        <meta name="twitter:description" content={description} />
+        <meta name="twitter:image" content="https://paywallexperiments.com/og-result-image.png" />
+      </Helmet>
+      
+      <div className="min-h-screen bg-slate-50 pt-12 md:pt-32">
       <div className="max-w-3xl mx-auto">
         {/* Email Input Modal */}
         {showEmailInput && (
@@ -366,7 +393,7 @@ export function ResultPage({ slug }: ResultPageProps) {
                     key={index}
                     src={image.url}
                     alt={`Result image ${index + 1}`}
-                    className="h-[300px] md:h-[450px] w-auto flex-shrink-0 rounded-2xl border border-[0.5px] object-contain"
+                    className="h-[300px] md:h-[400px] w-auto flex-shrink-0 rounded-2xl border border-[0.5px] object-contain"
                   />
                 ))}
                 <div className="!min-w-2 !min-h-2"></div>
@@ -383,10 +410,7 @@ export function ResultPage({ slug }: ResultPageProps) {
 
             <h1 className="text-4xl md:text-5xl font-bold text-slate-900 mb-3">{title}</h1>
             <p className="text-slate-600 md:text-lg">
-              Based on 1000's of lessons from the team at{" "}
-              <a className="text-brand-primary cursor-pointer underline" href="https://superwall.com">
-                Superwall.com
-              </a>
+              Based on 1,824 lessons from 422 unique experiments run by <a className="text-brand-primary cursor-pointer underline " href="https://superwall.com">Superwall.com</a>
             </p>
             </div>
         </div>
@@ -419,7 +443,7 @@ export function ResultPage({ slug }: ResultPageProps) {
       {/* Footer CTA */}
       <div className="text-center w-full flex flex-col items-center justify-center mt-12 md:mt-24 px-4">
         <h2 className="text-3xl py-6 md:text-5xl font-bold max-w-[800px] w-full">
-          It doesn't have to be a guessing game – launch this experiment today.
+          It doesn't have to be a guessing game – launch this today.
         </h2>
         
         <div className="flex flex-col gap-6">
@@ -480,6 +504,7 @@ export function ResultPage({ slug }: ResultPageProps) {
       {/* Examples Footer */}
       <ExamplesFooter />
     </div>
+    </>
   );
 }
 

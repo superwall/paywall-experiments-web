@@ -1,90 +1,25 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { X, Loader2, Plus, ArrowUp } from "lucide-react";
-import Markdown from "react-markdown";
 import ShinyText from "./components/ShinyText";
 import { useTypingEffect } from "./hooks/useTypingEffect";
+import type { ResultData } from "./types/result";
+import { ExamplesFooter } from "./components/ExamplesFooter";
 
 const MAX_IMAGES = 5;
 
-const EXAMPLES = [
-  {
-    id: 1,
-    title: "Example 1",
-    image: "https://bepbjmwwfwlsrympfeug.supabase.co/storage/v1/object/public/paywalls/745089947/paywall-1761325244577.png",
-    prompt: "Design a paywall experiment for brainly"
-  },
-  {
-    id: 2,
-    title: "Video Editor",
-    image: "https://bepbjmwwfwlsrympfeug.supabase.co/storage/v1/object/public/paywalls/1191337894/paywall-1760367260143.png",
-    prompt: "Design a paywall experiment for this video editing app"
-  },
-  {
-    id: 3,
-    title: "Perplexity",
-    image: "https://bepbjmwwfwlsrympfeug.supabase.co/storage/v1/object/public/paywalls/1668000334/paywall-1754321860221.png",
-    prompt: "Design a paywall experiment for this AI chat app"
-  },
-  {
-    id: 4,
-    title: "Headspace",
-    image: "https://bepbjmwwfwlsrympfeug.supabase.co/storage/v1/object/public/paywalls/493145008/paywall-1760719086302.png",
-    prompt: "Design a paywall experiment for this meditation app"
-  },
-  {
-    id: 5,
-    title: "ChatGPT",
-    image: "https://bepbjmwwfwlsrympfeug.supabase.co/storage/v1/object/public/paywalls/6448311069/paywall-1757946074763.png",
-    prompt: "Design a paywall experiment for this AI chat app"
-  },
-  {
-    id: 6,
-    title: "Evernote",
-    image: "https://bepbjmwwfwlsrympfeug.supabase.co/storage/v1/object/public/paywalls/281796108/paywall-1750266886102.png",
-    prompt: "Design a paywall experiment for this note-taking app"
-  },
-  {
-    id: 7,
-    title: "Pixelcut",
-    image: "https://bepbjmwwfwlsrympfeug.supabase.co/storage/v1/object/public/paywalls/1534785237/paywall-1759940659559.png",
-    prompt: "Design a paywall experiment for this AI image editing app"
-  },
-];
-
 export function PaywallBuilder() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [prompt, setPrompt] = useState("");
   const [uploadedImages, setUploadedImages] = useState<(File | string)[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [generatedOutput, setGeneratedOutput] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Check for debug mode
-  const isDebugMode = useMemo(() => {
-    if (typeof window !== 'undefined') {
-      return new URLSearchParams(window.location.search).get('debug') === 'true';
-    }
-    return false;
-  }, []);
-
-  // Shuffle examples on mount
-  const shuffledExamples = useMemo(() => {
-    return [...EXAMPLES].sort(() => Math.random() - 0.5);
-  }, []);
-
-  // Memoize markdown components to prevent re-render loop
-  const markdownComponents = useMemo(() => ({
-    h1: () => null, // Hide H1 since we show it in the title
-    h2: ({node, ...props}: any) => <h2 className="text-slate-400 text-lg font-medium uppercase tracking-wider py-2" {...props} />,
-    h3: ({node, ...props}: any) => <h3 className="text-slate-400 text-md font-medium uppercase tracking-wider py-2" {...props} />,
-    h4: ({node, ...props}: any) => <h4 className="text-slate-400 text-md font-normal uppercase tracking-wider py-2" {...props} />,
-    h5: ({node, ...props}: any) => <h5 className="text-slate-400 text-md font-normal uppercase tracking-wider py-2" {...props} />,
-    h6: ({node, ...props}: any) => <h6 className="text-slate-400 text-md font-normal uppercase tracking-wider py-2" {...props} />,
-    p: ({node, ...props}: any) => <p className="text-slate-900 text-lg mb-4" {...props} />,
-  }), []);
 
   const loadingMessages = [
     "Analyzing...",
@@ -103,6 +38,25 @@ export function PaywallBuilder() {
     "What modifications could reduce trial abandonment here?"
   ];
   const placeholderText = useTypingEffect(placeholderTexts, 20, 20, 4000);
+
+  // Handle editing from shared results and example clicks
+  useEffect(() => {
+    const editResult = location.state?.editResult as ResultData | undefined;
+    const examplePrompt = location.state?.examplePrompt as string | undefined;
+    const exampleImage = location.state?.exampleImage as string | undefined;
+    
+    if (editResult) {
+      setPrompt(editResult.prompt);
+      // Set images from result
+      const imageUrls = editResult.images.map(img => img.url);
+      setUploadedImages(imageUrls);
+      setImagePreviews(imageUrls);
+    } else if (examplePrompt && exampleImage) {
+      setPrompt(examplePrompt);
+      setUploadedImages([exampleImage]);
+      setImagePreviews([exampleImage]);
+    }
+  }, [location.state]);
 
   const processFiles = (files: File[]) => {
     const availableSlots = MAX_IMAGES - uploadedImages.length;
@@ -159,12 +113,14 @@ export function PaywallBuilder() {
   const handleSubmit = async () => {
     if (!prompt.trim() && uploadedImages.length === 0) return;
 
+    // Scroll to top
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
     console.log("[Frontend] Starting request...");
     console.log("[Frontend] Prompt:", prompt);
     console.log("[Frontend] Number of images:", uploadedImages.length);
 
     setIsLoading(true);
-    setGeneratedOutput(null);
 
     try {
       const formData = new FormData();
@@ -202,7 +158,7 @@ export function PaywallBuilder() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as { generatedOutput?: string; slug?: string; error?: string };
       console.log("[Frontend] Response data:", data);
 
       if (data.error) {
@@ -210,9 +166,10 @@ export function PaywallBuilder() {
         throw new Error(data.error);
       }
 
-      if (data.generatedOutput) {
-        console.log("[Frontend] Setting generated output");
-        setGeneratedOutput(data.generatedOutput);
+      if (data.generatedOutput && data.slug) {
+        console.log("[Frontend] Generation complete, redirecting to result page");
+        // Redirect to result page
+        navigate(`/r/${data.slug}`);
       }
     } catch (error) {
       console.error("[Frontend] Error generating paywall:", error);
@@ -229,106 +186,18 @@ export function PaywallBuilder() {
     }
   };
 
-  const handleExampleClick = (example: typeof EXAMPLES[0]) => {
+  const handleExampleClick = (example: { prompt: string; image: string }) => {
     setPrompt(example.prompt);
     // Replace all images with the example image
     setUploadedImages([example.image]);
     setImagePreviews([example.image]);
-    // Optionally scroll to input
-    // window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleGenerateAnother = () => {
-    setGeneratedOutput(null);
-    setPrompt("");
-    setUploadedImages([]);
-    setImagePreviews([]);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
 
-  const handleDebugMarkdown = () => {
-    const testMarkdown = `# Markdown Test Experiment
-
-## Hypothesis
-
-We believe that testing **all markdown elements** will help us validate the *rendering system* and ensure proper formatting across different **heading levels** and *nested structures*.
-
-This paragraph demonstrates **bold text**, *italic text*, and ***bold italic text*** all working together.
-
-### Third Level Heading
-
-Here's an unordered list with some nested elements:
-
-- First item with **bold text**
-- Second item with *italic text*
-  - Nested item level 1
-  - Nested item level 2 with ***bold italic***
-    - Deeply nested item
-    - Another deeply nested item with **emphasis**
-- Third item back at top level
-
-#### Fourth Level Heading
-
-Now let's test an ordered list:
-
-1. First ordered item
-2. Second ordered item with **bold**
-   1. Nested ordered item
-   2. Another nested item with *italic*
-      1. Triple nested item
-      2. Triple nested with ***bold italic***
-3. Back to top level
-
-##### Fifth Level Heading
-
-Complex nested lists combining ordered and unordered:
-
-- Unordered parent
-  1. Ordered child with **bold**
-  2. Another ordered child
-     - Unordered grandchild
-     - Another unordered grandchild with *emphasis*
-- Back to unordered parent level
-
-###### Sixth Level Heading
-
-This is the smallest heading level, demonstrating all six heading types work correctly.
-
-## Variant
-
-The variant should include:
-
-- **Primary changes**: Update all heading styles to use consistent typography
-- **Secondary changes**: Ensure proper spacing between elements
-  - Add *generous padding* between sections
-  - Implement **color-coded headings** for better hierarchy
-    - Test nested emphasis combinations
-    - Validate ***bold italic*** rendering in deep nests
-
-## Reasoning
-
-Testing comprehensive markdown ensures:
-
-1. **Visual hierarchy** is maintained across all heading levels
-2. *Text emphasis* works correctly in all contexts
-   1. Including **nested lists**
-   2. With ***combined formatting***
-3. List nesting doesn't break styling
-
-Additional considerations:
-
-- Lists should maintain proper indentation
-  - Even at *deep nesting levels*
-    - Like this ***third level***
-- Text formatting should work in lists
-- Both ordered and unordered lists should render correctly`;
-
-    setGeneratedOutput(testMarkdown);
-  };
 
   return (
     <div
-      className="min-h-screen bg-slate-50 flex flex-col items-center justify-between pt-[64px] md:pt-[100px] p-4 pb-0 relative"
+      className="min-h-screen overflow-hidden bg-slate-50 flex flex-col items-center justify-between pt-[64px] md:pt-[100px] pb-0 relative"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -337,7 +206,7 @@ Additional considerations:
       
       {/* Drag Overlay */}
       {isDragging && (
-        <div className="absolute  transition-all inset-0 backdrop-blur-sm z-50 flex items-center justify-center">
+        <div className="absolute  transition-all inset-0 backdrop-blur-sm z-50 flex items-center justify-center pointer-events-none">
           <div className="flex flex-col items-center">
             <p className="text-black text-3xl mb-2">Drop screenshots here</p>
             <p className="text-black/40">Upload up to {MAX_IMAGES - uploadedImages.length} more image{MAX_IMAGES - uploadedImages.length !== 1 ? 's' : ''}</p>
@@ -348,8 +217,8 @@ Additional considerations:
         {/* Header */}
         <div className="text-center mb-12">
           {/* Show uploaded images while loading */}
-          {(isLoading || generatedOutput) && imagePreviews.length > 0 && (
-            <div className={`${isLoading ? 'animate-pulse' : ''} flex justify-center gap-2 mb-10 flex-wrap relative`}>
+          {isLoading && imagePreviews.length > 0 && (
+            <div className="animate-pulse flex justify-center gap-2 mb-10 flex-wrap relative">
               {imagePreviews.map((preview, index) => (
                 <img
                   key={index}
@@ -368,214 +237,115 @@ Additional considerations:
             </div>
           )}
 
-
-
-          <h1 className="text-4xl md:text-5xl font-bold text-slate-900 mb-3 w-full min-h-[58px]">
-
-            {isLoading ? <ShinyText
-              text={typingText}
-              disabled={false}
-              speed={2}
-              className="text-4xl mt-4"
-            /> : generatedOutput ? (generatedOutput.trim().split('\n')[0] || "Your Results").replace(/^#\s*/, '') : "Design a Paywall Experiment" }
+          <h1 className="text-4xl md:text-5xl font-bold text-slate-900 mb-3 w-full min-h-[58px] px-4">
+            {isLoading ? (
+              <ShinyText
+                text={typingText}
+                disabled={false}
+                speed={2}
+                className="text-4xl mt-4"
+              />
+            ) : (
+              "AI Powered Paywall Experiments"
+            )}
           </h1>
     
-        {!isLoading && (
-          <p className="text-slate-600 md:text-lg">
-            Based on 1000's of lessons from the team at <a className="text-brand-primary cursor-pointer underline " href="https://superwall.com">Superwall.com</a>
-          </p>
-        )}
+          {!isLoading && (
+            <p className="text-slate-600 md:text-lg px-4">
+              Based on 1,824 lessons from 422 unique experiments run by <a className="text-brand-primary cursor-pointer underline " href="https://superwall.com">Superwall.com</a>
+            </p>
+          )}
         </div>
 
-        {/* Response Display */}
-        {generatedOutput && (
-          <div className="mb-14 space-y-4">
-            {/* Experiment Data */}
-            <div className="!px-2 !pt-1 w-full bg-transparent text-slate-900 placeholder-slate-400 border-0 shadow-none resize-none text-lg mb-1 focus-visible:ring-0 min-h-20">
-              <div className="prose prose-slate max-w-none prose-ul:list-disc prose-ul:pl-5 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-1">
-                <Markdown components={markdownComponents}>
-                  {generatedOutput}
-                </Markdown>
-              </div>
-            </div>
-          </div>
-        )}
+        <div className="px-4">
 
         {/* Input Box */}
-        {!isLoading && !generatedOutput && (
+        {!isLoading && (
           <div className="bg-white rounded-2xl border border-[0.5px] border-slate-200 p-3 shadow-lg shadow-slate-200/40">
-          {/* Image Previews */}
-          {imagePreviews.length > 0 && (
-            <div className="mb-6 flex flex-wrap gap-2">
-              {imagePreviews.map((preview, index) => (
-                <div key={index} className="relative inline-block">
-                  <img
-                    src={preview}
-                    alt={`Uploaded preview ${index + 1}`}
-                    className="max-h-32 rounded-sm border border-slate-200"
-                  />
-                  <Button
-                    onClick={() => handleRemoveImage(index)}
-                    variant="secondary"
-                    size="icon-sm"
-                    className="absolute !p-0 !size-5 -top-0 -right-0 -translate-y-[40%] translate-x-[40%] rounded-full bg-white backdrop-blur-xl"
-                  >
-                    <X className="!w-3 !h-3" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
+            {/* Image Previews */}
+            {imagePreviews.length > 0 && (
+              <div className="mb-6 flex flex-wrap gap-2">
+                {imagePreviews.map((preview, index) => (
+                  <div key={index} className="relative inline-block">
+                    <img
+                      src={preview}
+                      alt={`Uploaded preview ${index + 1}`}
+                      className="max-h-32 rounded-sm border border-slate-200"
+                    />
+                    <Button
+                      onClick={() => handleRemoveImage(index)}
+                      variant="secondary"
+                      size="icon-sm"
+                      className="absolute !p-0 !size-5 -top-0 -right-0 -translate-y-[40%] translate-x-[40%] rounded-full bg-white backdrop-blur-xl"
+                    >
+                      <X className="!w-3 !h-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
 
-          {/* Text Input */}
-          <Textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholderText}
-            className="!px-2 !pt-1 w-full bg-transparent text-slate-900 placeholder-slate-400 border-0 shadow-none resize-none text-lg mb-1 focus-visible:ring-0 min-h-20"
-            disabled={isLoading}
-          />
+            {/* Text Input */}
+            <Textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholderText}
+              className="!px-2 !pt-1 w-full bg-transparent text-slate-900 placeholder-slate-400 border-0 shadow-none resize-none text-lg mb-1 focus-visible:ring-0 min-h-20"
+              disabled={isLoading}
+            />
 
-          {/* Action Buttons */}
-          <div className="flex items-end justify-between">
-            <div className="flex items-center gap-3">
-              {/* Photo Upload */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={handleImageUpload}
-                className="hidden"
-                id="image-upload"
-              />
-              <Button
-                asChild
-                variant="ghost"
-                size="sm"
-                className="bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900"
-                disabled={uploadedImages.length >= MAX_IMAGES}
-              >
-                <label htmlFor="image-upload" className="cursor-pointer">
-                  <Plus className="w-4 h-4" />
-                  Screenshots
-                </label>
-              </Button>
-
-              {/* Debug Button */}
-              {isDebugMode && (
+            {/* Action Buttons */}
+            <div className="flex items-end justify-between">
+              <div className="flex items-center gap-3">
+                {/* Photo Upload */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageUpload}
+                  className="hidden"
+                  id="image-upload"
+                />
                 <Button
-                  onClick={handleDebugMarkdown}
+                  asChild
                   variant="ghost"
                   size="sm"
-                  className="bg-purple-100 hover:bg-purple-200 text-purple-700 hover:text-purple-900"
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900"
+                  disabled={uploadedImages.length >= MAX_IMAGES}
                 >
-                  Test Markdown
+                  <label htmlFor="image-upload" className="cursor-pointer">
+                    <Plus className="w-4 h-4" />
+                    Screenshots
+                  </label>
                 </Button>
-              )}
+              </div>
 
+              {/* Submit Button */}
+              <Button
+                onClick={handleSubmit}
+                disabled={isLoading || (!prompt.trim() && uploadedImages.length === 0)}
+                size="icon-lg"
+                variant={"default"}
+                className="bg-brand-primary hover:scale-105 transition-all disabled:bg-brand-primary/50 disabled:opacity-50 rounded-full size-9 !p-0 text-white"
+              >
+                {isLoading ? (
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                ) : (
+                  <ArrowUp className="!w-6 !h-6" />
+                )}
+              </Button>
             </div>
-
-
-            {/* Submit Button */}
-            <Button
-              onClick={handleSubmit}
-              disabled={isLoading || (!prompt.trim() && uploadedImages.length === 0)}
-              size="icon-lg"
-              variant={"default"}
-              className="bg-brand-primary hover:scale-105 transition-all disabled:bg-brand-primary/50 disabled:opacity-50 rounded-full size-9 !p-0 text-white"
-            >
-              {isLoading ? (
-                <Loader2 className="w-6 h-6 animate-spin" />
-              ) : (
-                <ArrowUp className="!w-6 !h-6" />
-              )}
-            </Button>
           </div>
-        </div>
         )}
-
-
+        </div>
       </div>
 
-      {
-        isLoading && (  <><div className="h-[15vh]"></div></>)
-      }
-
-{/* CTAs */}
-            { !isLoading && generatedOutput && <div className="text-center w-full flex flex-col items-center justify-center mt-12 mb-24 px-4">
-              
-              <h2 className="text-3xl py-6 md:text-5xl font-bold max-w-[800px] w-full">It doesn't have to be a guessing game – launch this today.</h2>
-              
-              <div className="flex flex-col-reverse md:flex-row items-center gap-3 mt-6 justify-center">
-             
-              <Button
-                onClick={handleGenerateAnother}
-                size="xl"
-                variant="outline"
-                className="border-slate-200 text-slate-900 hover:bg-slate-50"
-              >
-                Try Another
-              </Button>
-               <Button
-                asChild
-                size="xl"
-                className="bg-brand-primary hover:bg-brand-primary/90 text-white font-semibold"
-              >
-                <a href="https://superwall.com" target="_blank" rel="noopener noreferrer">
-                  Visit Superwall → 
-                </a>
-              </Button>
-            </div></div>}
+      {isLoading && <div className="h-[15vh]"></div>}
 
       {/* Examples Footer */}
-      {!isLoading && (
-        <div className="bottom-0 left-0 right-0 bg-slate-50 pb-0 h-[240px] md:h-[400px] flex flex-col items-center justify-end ">
-        <div className=" md:pt-[120px] h-[180px] md:!h-[300px] md:hover:!h-[350px] ease-out !duration-[500ms] transition-all overflow-hidden !w-[95vw]">
-          <div className="max-w-3xl mx-auto pt-32 scale-[60%] md:scale-100">
-            {/* Fan-out cards container */}
-            <div className="relative h-64 flex items-end justify-center">
-              {shuffledExamples.map((example, index) => {
-                // Position cards in pyramid: 4th on top, 3rd/5th middle, 2nd/6th bottom, 1st/7th far edges
-                const positions: Array<{ rotate: number; translateY: number; left: number }> = [
-                  { rotate: -24, translateY: 120, left: -360 }, // 1st: far far left, bottom
-                  { rotate: -16, translateY: 80, left: -240 },  // 2nd: far left, bottom
-                  { rotate: -8, translateY: 40, left: -120 },   // 3rd: left-center, middle
-                  { rotate: 0, translateY: 0, left: 0 },        // 4th: center, top
-                  { rotate: 8, translateY: 40, left: 120 },     // 5th: right-center, middle
-                  { rotate: 16, translateY: 80, left: 240 },    // 6th: far right, bottom
-                  { rotate: 24, translateY: 120, left: 360 },   // 7th: far far right, bottom
-                ];
-
-                const style = positions[index] || positions[0];
-
-                return (
-                  <button
-                    key={example.id}
-                    onClick={() => handleExampleClick(example)}
-                    className="absolute bottom-0 w-56 rounded-t-xl bg-white shadow-md overflow-hidden transition-all duration-300 hover:scale-105 cursor-pointer group"
-                    style={{
-                      transform: `rotate(${style?.rotate}deg) translateY(${style?.translateY}px)`,
-                      left: `calc(50% - 112px + ${style?.left}px)`,
-                      zIndex: index === 3 ? 10 : Math.abs(index - 3) === 1 ? 5 : Math.abs(index - 3) === 2 ? 3 : 1,
-                    }}
-                  >
-                    <img
-                      src={example.image}
-                      alt={example.title}
-                      className="w-full h-auto object-contain "
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent flex items-end p-2">
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </div>
-      )}
+      {!isLoading && <ExamplesFooter onExampleClick={handleExampleClick} />}
     </div>
   );
 }

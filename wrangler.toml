@@ -3,6 +3,18 @@ main = "src/worker.ts"
 compatibility_date = "2024-10-29"
 assets = { directory = "./dist", binding = "ASSETS" }
 
+# R2 bucket for storing results and images
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "paywall-experiments"
+preview_bucket_name = "paywall-experiments-preview"
+
+# D1 database for storing emails
+[[d1_databases]]
+binding = "DB"
+database_name = "paywall-experiments-db"
+database_id = "1d2af265-365c-4cd9-b9ab-760be4d2f1f9"
+
 # Environment variables (use wrangler secret for sensitive values)
 [vars]
 # Add non-sensitive environment variables here

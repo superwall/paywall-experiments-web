@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import OpenAI from "openai";
 import { EXPERIMENT_PROMPT } from "./prompt";
 import { generateSlug, saveResultToR2, saveImageToR2, getResultFromR2 } from "./utils/storage";
-import { saveEmailToD1, saveGenerationToD1 } from "./utils/database";
+import { saveEmailToD1, saveGenerationToD1, updateGenerationEmailForSlug } from "./utils/database";
 import type { ResultData, StoredImage } from "./types/result";
 
 // Define environment bindings type
@@ -312,6 +312,14 @@ app.post('/api/emails', async (c) => {
     console.log("[Worker] Saving email:", { email, slug, userAgent, ipAddress });
 
     await saveEmailToD1(c.env.DB, email, slug, userAgent, ipAddress);
+
+    // Update generation record if it exists with null email
+    const updatedCount = await updateGenerationEmailForSlug(c.env.DB, slug, email);
+    if (updatedCount > 0) {
+      console.log("[Worker] Updated email in generations table for slug:", slug);
+    } else {
+      console.log("[Worker] No generation found with null email for slug:", slug);
+    }
 
     return c.json({ success: true, message: "Email saved successfully" });
   } catch (error) {

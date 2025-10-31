@@ -7,6 +7,7 @@ import Markdown from "react-markdown";
 import type { ResultData } from "./types/result";
 import { ExamplesFooter } from "./components/ExamplesFooter";
 import { getEmail, setEmail, hasEmail } from "./utils/email";
+import { usePostHogTracking, POSTHOG_EVENTS, identifyUserWithEmail } from "./utils/posthog";
 
 interface ResultPageProps {
   slug: string;
@@ -15,6 +16,7 @@ interface ResultPageProps {
 export function ResultPage({ slug }: ResultPageProps) {
   console.log("[ResultPage] Component mounted with slug:", slug);
   
+  const posthog = usePostHogTracking();
   const [result, setResult] = useState<ResultData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -23,6 +25,7 @@ export function ResultPage({ slug }: ResultPageProps) {
   const [email, setEmailState] = useState<string>("");
   const [showEmailInput, setShowEmailInput] = useState(false);
   const [isSubmittingEmail, setIsSubmittingEmail] = useState(false);
+  const [emailPromptTracked, setEmailPromptTracked] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -35,10 +38,25 @@ export function ResultPage({ slug }: ResultPageProps) {
       setEmailState(storedEmail);
       // Always show email input if debug mode is enabled
       setShowEmailInput(isDebug);
+      
+      // Identify user with email if available
+      if (posthog) {
+        identifyUserWithEmail(posthog, storedEmail);
+      }
     } else {
       setShowEmailInput(true);
     }
-  }, [isDebug]);
+  }, [isDebug, posthog]);
+
+  // Track email prompt shown
+  useEffect(() => {
+    if (showEmailInput && !emailPromptTracked && posthog) {
+      posthog.capture(POSTHOG_EVENTS.EMAIL_PROMPT_SHOWN, {
+        slug: slug,
+      });
+      setEmailPromptTracked(true);
+    }
+  }, [showEmailInput, emailPromptTracked, slug, posthog]);
 
   // Lock body scroll when email modal is open
   useEffect(() => {
@@ -182,6 +200,13 @@ export function ResultPage({ slug }: ResultPageProps) {
     await navigator.clipboard.writeText(text);
     setCopySuccess(true);
     setTimeout(() => setCopySuccess(false), 2000);
+    
+    // Track share link clicked
+    if (posthog) {
+      posthog.capture(POSTHOG_EVENTS.SHARE_LINK_CLICKED, {
+        slug: slug,
+      });
+    }
   };
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
@@ -191,6 +216,17 @@ export function ResultPage({ slug }: ResultPageProps) {
     setIsSubmittingEmail(true);
     const trimmedEmail = email.trim();
     setEmail(trimmedEmail); // This sets both cookie and localStorage
+    
+    // Track email entered event
+    if (posthog) {
+      posthog.capture(POSTHOG_EVENTS.EMAIL_ENTERED, {
+        slug: slug,
+        email: trimmedEmail,
+      });
+      
+      // Identify user with email
+      identifyUserWithEmail(posthog, trimmedEmail);
+    }
     
     // Save email to database
     try {
@@ -396,7 +432,7 @@ export function ResultPage({ slug }: ResultPageProps) {
             className="border-slate-200 text-slate-900 hover:bg-slate-50"
           >
             <Share2 className="w-4 h-4 mr-2" />
-            {copySuccess ? "Copied!" : "Share"}
+            {copySuccess ? "Copied!" : "Share Link"}
           </Button>
 
           <Button
@@ -404,13 +440,33 @@ export function ResultPage({ slug }: ResultPageProps) {
             size="xl"
             variant="juicy"
           >
-            <a href="https://superwall.com" target="_blank" rel="noopener noreferrer">
+            <a 
+              href="https://superwall.com?ref=paywallexperiments" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              onClick={() => {
+                // Track visit superwall clicked
+                if (posthog) {
+                  posthog.capture(POSTHOG_EVENTS.VISIT_SUPERWALL_CLICKED, {
+                    slug: slug,
+                  });
+                }
+              }}
+            >
               <span className="hidden md:block">Visit</span> Superwall <ArrowRight className="w-4 h-4 " />
             </a>
           </Button>
         </div>
           <Button
-            onClick={() => navigate('/')}
+            onClick={() => {
+              // Track try another clicked
+              if (posthog) {
+                posthog.capture(POSTHOG_EVENTS.TRY_ANOTHER_CLICKED, {
+                  slug: slug,
+                });
+              }
+              navigate('/');
+            }}
             size="xl"
             variant="ghost"
             className="!border-slate-200/0 text-slate-900 hover:bg-slate-50"

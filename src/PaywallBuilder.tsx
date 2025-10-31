@@ -7,12 +7,15 @@ import ShinyText from "./components/ShinyText";
 import { useTypingEffect } from "./hooks/useTypingEffect";
 import type { ResultData } from "./types/result";
 import { ExamplesFooter } from "./components/ExamplesFooter";
+import { usePostHogTracking, POSTHOG_EVENTS } from "./utils/posthog";
+import { getEmail } from "./utils/email";
 
 const MAX_IMAGES = 5;
 
 export function PaywallBuilder() {
   const location = useLocation();
   const navigate = useNavigate();
+  const posthog = usePostHogTracking();
   const [prompt, setPrompt] = useState("");
   const [uploadedImages, setUploadedImages] = useState<(File | string)[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
@@ -168,6 +171,27 @@ export function PaywallBuilder() {
 
       if (data.generatedOutput && data.slug) {
         console.log("[Frontend] Generation complete, redirecting to result page");
+        
+        // Track generation event
+        if (posthog) {
+          const email = getEmail();
+          const imageCount = uploadedImages.length;
+          
+          posthog.capture(POSTHOG_EVENTS.GENERATION_COMPLETE, {
+            prompt: prompt || '',
+            image_count: imageCount,
+            slug: data.slug,
+            has_email: !!email,
+          });
+          
+          // Identify user with email if available
+          if (email) {
+            posthog.identify(email, {
+              email: email,
+            });
+          }
+        }
+        
         // Redirect to result page
         navigate(`/r/${data.slug}`);
       }

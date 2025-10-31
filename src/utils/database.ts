@@ -106,3 +106,15 @@ export async function getAllGenerations(
   return result.results || [];
 }
 
+export async function updateGenerationEmailForSlug(
+  db: D1Database,
+  slug: string,
+  email: string
+): Promise<number> {
+  const result = await db.prepare(
+    `UPDATE generations SET email = ? WHERE slug = ? AND email IS NULL`
+  ).bind(email, slug).run();
+  
+  return result.meta.changes || 0;
+}
+

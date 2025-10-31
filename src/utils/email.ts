@@ -8,7 +8,7 @@ export function getEmail(): string | null {
     const cookies = document.cookie.split(';');
     for (const cookie of cookies) {
       const [name, value] = cookie.trim().split('=');
-      if (name === EMAIL_COOKIE_NAME) {
+      if (name === EMAIL_COOKIE_NAME && value) {
         return decodeURIComponent(value);
       }
     }

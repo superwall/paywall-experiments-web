@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useEffect } from "react";
+import { useState, useRef, useMemo, useEffect, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,6 +7,8 @@ import ShinyText from "./components/ShinyText";
 import { useTypingEffect } from "./hooks/useTypingEffect";
 import type { ResultData } from "./types/result";
 import { ExamplesFooter } from "./components/ExamplesFooter";
+import { HistorySidebar, saveToHistory, type HistoryItem } from "./components/HistorySidebar";
+import { HistoryButton } from "./components/HistoryButton";
 import { usePostHogTracking, POSTHOG_EVENTS } from "./utils/posthog";
 import { getEmail } from "./utils/email";
 
@@ -21,7 +23,14 @@ export function PaywallBuilder() {
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isInputFocused, setIsInputFocused] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const turnstileRef = useRef<HTMLDivElement>(null);
+  const turnstileWidgetIdRef = useRef<string | null>(null);
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState<string | null>(null);
+  const turnstileTokenRef = useRef<string | null>(null);
 
 
   const loadingMessages = [
@@ -42,6 +51,79 @@ export function PaywallBuilder() {
   ];
   const placeholderText = useTypingEffect(placeholderTexts, 20, 20, 4000);
 
+  // Fetch Turnstile site key on mount
+  useEffect(() => {
+    const fetchSiteKey = async () => {
+      try {
+        const response = await fetch('/api/turnstile-site-key');
+        const data = await response.json() as { siteKey: string };
+        if (data.siteKey) {
+          setTurnstileSiteKey(data.siteKey);
+        } else {
+          console.log('[Frontend] Turnstile site key not configured, skipping widget');
+        }
+      } catch (error) {
+        console.error('[Frontend] Failed to fetch Turnstile site key:', error);
+      }
+    };
+    fetchSiteKey();
+  }, []);
+
+  // Initialize Turnstile widget when site key is available
+  useEffect(() => {
+    if (!turnstileSiteKey || !turnstileRef.current || typeof window === 'undefined') return;
+    
+    // Check if Turnstile script is loaded
+    if (!(window as any).turnstile) {
+      // Wait for script to load
+      const checkTurnstile = setInterval(() => {
+        if ((window as any).turnstile && turnstileRef.current) {
+          clearInterval(checkTurnstile);
+          initializeTurnstile();
+        }
+      }, 100);
+      
+      return () => clearInterval(checkTurnstile);
+    }
+    
+    initializeTurnstile();
+    
+    function initializeTurnstile() {
+      if (!turnstileRef.current || !turnstileSiteKey) return;
+      
+      // Clean up existing widget if any
+      if (turnstileWidgetIdRef.current && (window as any).turnstile) {
+        try {
+          (window as any).turnstile.remove(turnstileWidgetIdRef.current);
+        } catch (e) {
+          // Ignore errors
+        }
+      }
+      
+      // Render new widget
+      const widgetId = (window as any).turnstile.render(turnstileRef.current, {
+        sitekey: turnstileSiteKey,
+        size: 'invisible',
+        callback: (token: string) => {
+          console.log('[Frontend] Turnstile token received');
+          turnstileTokenRef.current = token;
+        },
+      });
+      
+      turnstileWidgetIdRef.current = widgetId;
+    }
+    
+    return () => {
+      if (turnstileWidgetIdRef.current && (window as any).turnstile) {
+        try {
+          (window as any).turnstile.remove(turnstileWidgetIdRef.current);
+        } catch (e) {
+          // Ignore errors
+        }
+      }
+    };
+  }, [turnstileSiteKey]);
+
   // Handle editing from shared results and example clicks
   useEffect(() => {
     const editResult = location.state?.editResult as ResultData | undefined;
@@ -61,7 +143,7 @@ export function PaywallBuilder() {
     }
   }, [location.state]);
 
-  const processFiles = (files: File[]) => {
+  const processFiles = useCallback((files: File[]) => {
     const availableSlots = MAX_IMAGES - uploadedImages.length;
     const filesToAdd = files.slice(0, availableSlots);
 
@@ -78,7 +160,7 @@ export function PaywallBuilder() {
       };
       reader.readAsDataURL(file);
     });
-  };
+  }, [uploadedImages]);
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
@@ -91,18 +173,21 @@ export function PaywallBuilder() {
   };
 
   const handleDragOver = (e: React.DragEvent) => {
+    if (isLoading) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(true);
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
+    if (isLoading) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
   };
 
   const handleDrop = (e: React.DragEvent) => {
+    if (isLoading) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
@@ -115,6 +200,28 @@ export function PaywallBuilder() {
 
   const handleSubmit = async () => {
     if (!prompt.trim() && uploadedImages.length === 0) return;
+
+    // Execute Turnstile challenge if widget is available and configured
+    if (turnstileWidgetIdRef.current && (window as any).turnstile && turnstileSiteKey) {
+      try {
+        turnstileTokenRef.current = null; // Reset token
+        await (window as any).turnstile.execute(turnstileWidgetIdRef.current);
+        
+        // Wait for token (with timeout)
+        let attempts = 0;
+        while (!turnstileTokenRef.current && attempts < 50) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          attempts++;
+        }
+        
+        if (!turnstileTokenRef.current) {
+          console.warn('[Frontend] Turnstile token not received in time');
+        }
+      } catch (error) {
+        console.error('[Frontend] Turnstile execution failed:', error);
+        // Continue anyway - backend will handle missing token
+      }
+    }
 
     // Track generation begin
     if (posthog) {
@@ -140,6 +247,11 @@ export function PaywallBuilder() {
     try {
       const formData = new FormData();
       formData.append("prompt", prompt);
+
+      // Add Turnstile token if available
+      if (turnstileTokenRef.current) {
+        formData.append("cf-turnstile-response", turnstileTokenRef.current);
+      }
 
       // Separate Files and URLs
       let fileIndex = 0;
@@ -184,6 +296,22 @@ export function PaywallBuilder() {
       if (data.generatedOutput && data.slug) {
         console.log("[Frontend] Generation complete, redirecting to result page");
         
+        // Extract title from generated output (first line or first sentence)
+        const titleMatch = data.generatedOutput.match(/^#+\s*(.+)$/m) || 
+                          data.generatedOutput.match(/^(.+)$/m);
+        const title = (titleMatch && titleMatch[1]) ? titleMatch[1].trim().slice(0, 100) : 'Untitled Experiment';
+        
+        // Save to history
+        const historyItem: HistoryItem = {
+          id: data.slug,
+          slug: data.slug,
+          title: title,
+          date: new Date().toISOString(),
+          url: `/r/${data.slug}`,
+          prompt: prompt || '',
+        };
+        saveToHistory(historyItem);
+        
         // Track generation event
         if (posthog) {
           const email = getEmail();
@@ -209,9 +337,25 @@ export function PaywallBuilder() {
       }
     } catch (error) {
       console.error("[Frontend] Error generating paywall:", error);
+      // Reset Turnstile widget on error
+      if (turnstileWidgetIdRef.current && (window as any).turnstile) {
+        try {
+          (window as any).turnstile.reset(turnstileWidgetIdRef.current);
+        } catch (e) {
+          // Ignore errors
+        }
+      }
     } finally {
       console.log("[Frontend] Request completed, setting loading to false");
       setIsLoading(false);
+      // Reset Turnstile widget after submission
+      if (turnstileWidgetIdRef.current && (window as any).turnstile) {
+        try {
+          (window as any).turnstile.reset(turnstileWidgetIdRef.current);
+        } catch (e) {
+          // Ignore errors
+        }
+      }
     }
   };
 
@@ -236,17 +380,89 @@ export function PaywallBuilder() {
     // Replace all images with the example image
     setUploadedImages([example.image]);
     setImagePreviews([example.image]);
+    textareaRef.current?.focus();
   };
+
+  const handleSuggestionClick = (suggestion: string) => {
+    setPrompt(suggestion);
+    setIsInputFocused(false);
+  };
+
+  // Auto-resize textarea
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    // Reset height to auto to get the correct scrollHeight
+    textarea.style.height = 'auto';
+    
+    // Calculate line height (approximate based on font size and line height)
+    const lineHeight = parseInt(getComputedStyle(textarea).lineHeight) || 24;
+    const minHeight = lineHeight; // 1 line
+    const maxHeight = lineHeight * 5; // 5 lines max
+    
+    // Set height based on content, clamped between min and max
+    const newHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
+    textarea.style.height = `${newHeight}px`;
+  }, [prompt]);
+
+  // Handle paste events for images
+  useEffect(() => {
+    const handlePaste = async (e: ClipboardEvent) => {
+      // Don't handle paste if loading or if it's in the textarea (let normal paste work there)
+      if (isLoading || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const imageFiles: File[] = [];
+
+      // Extract image files from clipboard
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item && item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) {
+            imageFiles.push(file);
+          }
+        }
+      }
+
+      // Process images if any were found
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        processFiles(imageFiles);
+      }
+    };
+
+    // Add paste listener to document
+    document.addEventListener('paste', handlePaste);
+
+    return () => {
+      document.removeEventListener('paste', handlePaste);
+    };
+  }, [processFiles, isLoading]);
+
 
 
 
   return (
     <div
-      className={`min-h-screen overflow-hidden bg-slate-50 flex flex-col items-center justify-between pt-[64px] ${!isLoading ? 'md:pt-[100px]' : ''} transition-all duration-300 ease-out  pb-0 relative`}
+      className={`min-h-[100dvh] relative overflow-hidden bg-slate-50 flex flex-col items-center justify-between pt-[64px] ${!isLoading ? 'md:pt-[100px]' : ''} transition-all duration-300 ease-out  pb-0 relative`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {/* History Sidebar */}
+      <HistorySidebar isOpen={isHistoryOpen} onClose={() => setIsHistoryOpen(false)} />
+      
+      {/* History Button */}
+      <div className="fixed top-4 left-4 z-30">
+        <HistoryButton onClick={() => setIsHistoryOpen(true)} />
+      </div>
+      
       <div></div>
       
       {/* Drag Overlay */}
@@ -312,7 +528,22 @@ export function PaywallBuilder() {
 
         {/* Input Box */}
         {!isLoading && (
-          <div className="bg-white rounded-2xl border border-[0.5px] border-slate-200 p-3 shadow-lg shadow-slate-200/40">
+          <div className="bg-white rounded-2xl border border-[0.5px] border-slate-200 p-3 shadow-lg shadow-slate-200/40 relative">
+            {/* Suggestions */}
+            {isInputFocused && (
+              <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl border border-[0.5px] border-slate-200 shadow-lg shadow-slate-200/40 overflow-hidden z-10">
+                {placeholderTexts.map((suggestion, index) => (
+                  <button
+                    key={index}
+                    onClick={() => handleSuggestionClick(suggestion)}
+                    className="w-full text-left px-4 py-3 hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-b-0 text-sm text-slate-700 hover:text-slate-900"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Image Previews */}
             {imagePreviews.length > 0 && (
               <div className="mb-6 flex flex-wrap gap-2">
@@ -338,12 +569,20 @@ export function PaywallBuilder() {
 
             {/* Text Input */}
             <Textarea
+              ref={textareaRef}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               onKeyDown={handleKeyDown}
+              onFocus={() => setIsInputFocused(true)}
+              onBlur={() => {
+                // Delay to allow click on suggestion before hiding
+                setTimeout(() => setIsInputFocused(false), 150);
+              }}
               placeholder={placeholderText}
-              className="!px-2 !pt-1 w-full bg-transparent text-slate-900 placeholder-slate-400 border-0 shadow-none resize-none text-lg mb-1 focus-visible:ring-0 min-h-20"
+              className="sticky top-[100px] !px-2 !pt-1 w-full bg-transparent text-slate-900 placeholder-slate-400 border-0 shadow-none resize-none text-lg mb-1 focus-visible:ring-0 overflow-hidden"
+              rows={1}
               disabled={isLoading}
+              // autoFocus={true}
             />
 
             {/* Action Buttons */}
@@ -388,6 +627,9 @@ export function PaywallBuilder() {
                 )}
               </Button>
             </div>
+            
+            {/* Turnstile Widget (invisible) */}
+            <div ref={turnstileRef} className="hidden"></div>
           </div>
         )}
         </div>
@@ -396,7 +638,7 @@ export function PaywallBuilder() {
       {isLoading && <div className=""></div>}
 
       {/* Examples Footer */}
-      {!isLoading && <ExamplesFooter onExampleClick={handleExampleClick} />}
+      {!isLoading && <ExamplesFooter onExampleClick={handleExampleClick} isInputFocused={isInputFocused} />}
     </div>
   );
 }

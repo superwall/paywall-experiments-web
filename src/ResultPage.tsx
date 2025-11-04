@@ -3,10 +3,12 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowRight, Loader2, Redo, Redo2, RefreshCcw, RotateCcw, Share2, Undo, UnlockIcon } from "lucide-react";
+import { ArrowRight, Loader2, Redo, Redo2, RefreshCcw, RotateCcw, Share2, Undo, UnlockIcon, ArrowLeft } from "lucide-react";
 import Markdown from "react-markdown";
 import type { ResultData } from "./types/result";
 import { ExamplesFooter } from "./components/ExamplesFooter";
+import { HistorySidebar, saveToHistory, type HistoryItem } from "./components/HistorySidebar";
+import { HistoryButton } from "./components/HistoryButton";
 import { getEmail, setEmail, hasEmail } from "./utils/email";
 import { usePostHogTracking, POSTHOG_EVENTS, identifyUserWithEmail } from "./utils/posthog";
 
@@ -27,6 +29,7 @@ export function ResultPage({ slug }: ResultPageProps) {
   const [showEmailInput, setShowEmailInput] = useState(false);
   const [isSubmittingEmail, setIsSubmittingEmail] = useState(false);
   const [emailPromptTracked, setEmailPromptTracked] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -117,6 +120,19 @@ export function ResultPage({ slug }: ResultPageProps) {
           createdAt: data.createdAt
         });
         setResult(data);
+        
+        // Save to history if not already saved
+        const title = data.generatedOutput.trim().split('\n')[0]?.replace(/^#\s*/, '') || "Paywall Experiment";
+        const historyItem: HistoryItem = {
+          id: data.id,
+          slug: slug,
+          title: title,
+          date: data.createdAt,
+          url: `/r/${slug}`,
+          prompt: data.prompt || '',
+        };
+        saveToHistory(historyItem);
+        
         console.log("[ResultPage] Result state set successfully");
       } catch (err) {
         console.error("[ResultPage] Error fetching result:", err);
@@ -197,7 +213,7 @@ export function ResultPage({ slug }: ResultPageProps) {
 
   const handleCopyLink = async () => {
     const url = window.location.href;
-    const text = `Check out this AI-generated paywall experiment → ${url}`;
+    const text = `${url}`;
     await navigator.clipboard.writeText(text);
     setCopySuccess(true);
     setTimeout(() => setCopySuccess(false), 2000);
@@ -275,7 +291,7 @@ export function ResultPage({ slug }: ResultPageProps) {
   if (loading) {
     console.log("[ResultPage] Rendering loading state");
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="min-h-[100dvh] bg-slate-50 flex items-center justify-center">
         <Loader2 className="w-12 h-12 animate-spin text-brand-primary" />
       </div>
     );
@@ -284,7 +300,7 @@ export function ResultPage({ slug }: ResultPageProps) {
   if (error || !result) {
     console.log("[ResultPage] Rendering error state - error:", error, "result:", result);
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div className="min-h-[100dvh] bg-slate-50 flex items-center justify-center p-4">
         <div className="max-w-md w-full text-center">
           <h1 className="text-3xl font-bold text-slate-900 mb-4">Not Found</h1>
           <p className="text-slate-600 mb-6">{error || "This result doesn't exist"}</p>
@@ -308,7 +324,7 @@ export function ResultPage({ slug }: ResultPageProps) {
 
   // Create description from prompt or first paragraph of generated output
   const description = result.prompt 
-    ? `Check out this AI-generated paywall experiment: ${result.prompt.substring(0, 100)}...`
+    ? `${result.prompt.substring(0, 100)}...`
     : `AI-generated paywall experiment based on 1,824 lessons from 422 unique experiments run by Superwall.com`;
   
   const currentUrl = `https://paywallexperiments.com/r/${slug}`;
@@ -333,7 +349,23 @@ export function ResultPage({ slug }: ResultPageProps) {
         <meta name="twitter:image" content="https://paywallexperiments.com/og-result-image.png" />
       </Helmet>
       
-      <div className="min-h-screen bg-slate-50 pt-12 md:pt-32">
+      {/* History Sidebar */}
+      <HistorySidebar isOpen={isHistoryOpen} onClose={() => setIsHistoryOpen(false)} />
+      
+      {/* Navigation Buttons */}
+      <div className="fixed top-4 left-4 z-30 flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => navigate('/')}
+          className="bg-white/80 !rounded-full"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </Button>
+        <HistoryButton onClick={() => setIsHistoryOpen(true)} />
+      </div>
+      
+      <div className="min-h-[100dvh] bg-slate-50 pt-12 md:pt-32">
       <div className="max-w-3xl mx-auto">
         {/* Email Input Modal */}
         {showEmailInput && (
@@ -410,7 +442,7 @@ export function ResultPage({ slug }: ResultPageProps) {
 
             <h1 className="text-4xl md:text-5xl font-bold text-slate-900 mb-3">{title}</h1>
             <p className="text-slate-600 md:text-lg">
-              Based on 1,824 lessons from 422 unique experiments run by <a className="text-brand-primary cursor-pointer underline " href="https://superwall.com">Superwall.com</a>
+              Based on 1,824 lessons from 422 unique experiments run by <a className="text-brand-primary cursor-pointer underline " href="https://superwall.com?ref=paywallexperiments">Superwall.com</a>
             </p>
             </div>
         </div>

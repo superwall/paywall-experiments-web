@@ -13,6 +13,8 @@ type Bindings = {
   OPENROUTER_URL: string;
   STORAGE: R2Bucket;
   DB: D1Database;
+  TURNSTILE_SECRET_KEY?: string;
+  TURNSTILE_SITE_KEY?: string;
   ASSETS: {
     fetch: (request: Request) => Promise<Response>;
   };
@@ -52,6 +54,14 @@ app.get('/api/hello/:name', (c) => {
   });
 });
 
+// Get Turnstile site key (public key)
+app.get('/api/turnstile-site-key', (c) => {
+  const siteKey = c.env.TURNSTILE_SITE_KEY || '';
+  return c.json({
+    siteKey: siteKey,
+  });
+});
+
 app.post('/api/generate', async (c) => {
   try {
     console.log("[Worker] /api/generate - Request received");
@@ -63,19 +73,60 @@ app.post('/api/generate', async (c) => {
       baseURL: env.OPENROUTER_URL,
     });
 
+    // Parse form data from request
+    const formData = await c.req.formData();
+    const turnstileToken = formData.get("cf-turnstile-response") as string | null;
+
+    // Get IP address for logging and Turnstile verification
+    const ipAddress = c.req.header('CF-Connecting-IP') || 
+                      c.req.header('X-Forwarded-For')?.split(',')[0] || 
+                      undefined;
+
+    // Verify Turnstile token (skip in development/local if secret key not configured)
+    const isDevelopment = !env.TURNSTILE_SECRET_KEY || env.TURNSTILE_SECRET_KEY === '';
+    
+    if (!isDevelopment) {
+      if (!turnstileToken) {
+        console.error("[Worker] Turnstile token missing");
+        return c.json({ error: "Turnstile verification required" }, 400);
+      }
+
+      // Verify Turnstile token with Cloudflare
+      const turnstileResponse = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          secret: env.TURNSTILE_SECRET_KEY,
+          response: turnstileToken,
+          remoteip: ipAddress,
+        }),
+      });
+
+      const turnstileResult = await turnstileResponse.json() as { success: boolean; 'error-codes'?: string[] };
+      
+      if (!turnstileResult.success) {
+        console.error("[Worker] Turnstile verification failed:", turnstileResult['error-codes']);
+        return c.json({ 
+          error: "Turnstile verification failed",
+          error_codes: turnstileResult['error-codes']
+        }, 400);
+      }
+
+      console.log("[Worker] Turnstile verification successful");
+    } else {
+      console.log("[Worker] Turnstile verification skipped (development mode)");
+    }
+
     // Check for email cookie or header
     const cookieHeader = c.req.header('Cookie') || '';
     const emailCookieMatch = cookieHeader.match(/paywall_ai_email=([^;]+)/);
     const email = emailCookieMatch ? decodeURIComponent(emailCookieMatch[1]) : undefined;
     
-    // Get user agent and IP address for logging
+    // Get user agent for logging
     const userAgent = c.req.header('User-Agent') || undefined;
-    const ipAddress = c.req.header('CF-Connecting-IP') || 
-                      c.req.header('X-Forwarded-For')?.split(',')[0] || 
-                      undefined;
 
-    // Parse form data from request
-    const formData = await c.req.formData();
     const userPrompt = formData.get("prompt") as string;
 
     // Get all File images (up to 5)

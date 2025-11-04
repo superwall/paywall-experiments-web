@@ -18,6 +18,10 @@ database_id = "1d2af265-365c-4cd9-b9ab-760be4d2f1f9"
 # Environment variables (use wrangler secret for sensitive values)
 [vars]
 # Add non-sensitive environment variables here
+# 
+# Required secrets (set via `wrangler secret put <SECRET_NAME>`):
+# - TURNSTILE_SECRET_KEY: Cloudflare Turnstile secret key
+# - TURNSTILE_SITE_KEY: Cloudflare Turnstile site key (public)
 
 # Build configuration
 [build]

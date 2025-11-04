@@ -49,9 +49,10 @@ const EXAMPLES = [
 
 interface ExamplesFooterProps {
   onExampleClick?: (example: typeof EXAMPLES[0]) => void;
+  isInputFocused?: boolean;
 }
 
-export function ExamplesFooter({ onExampleClick }: ExamplesFooterProps) {
+export function ExamplesFooter({ onExampleClick, isInputFocused = false }: ExamplesFooterProps) {
   const navigate = useNavigate();
   const posthog = usePostHogTracking();
 
@@ -80,7 +81,7 @@ export function ExamplesFooter({ onExampleClick }: ExamplesFooterProps) {
   };
 
   return (
-    <div className="w-full bg-slate-50 pb-0 h-[240px] md:h-[400px] flex flex-col items-center justify-end">
+    <div className={`w-full bg-slate-50 pb-0 h-[240px] md:h-[400px] flex flex-col items-center justify-end transition-opacity duration-300 ${isInputFocused ? 'md:opacity-100 opacity-0 pointer-events-none md:pointer-events-auto' : 'opacity-100'}`}>
       <div className="md:pt-[120px] h-[180px] md:!h-[300px] md:hover:!h-[330px] ease-out !duration-[500ms] transition-all overflow-hidden w-full ">
         <div className="max-w-3xl mx-auto pt-32 scale-[60%] md:scale-100">
           {/* Fan-out cards container */}

@@ -115,7 +115,11 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    background-color: #F8FAFC;
+  }
   body {
     @apply bg-background text-foreground;
+    background-color: #F8FAFC;
   }
 }

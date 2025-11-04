@@ -17,7 +17,7 @@ const app = (
     <PostHogProvider
       apiKey={'phc_SD2craDx6Gv9ahU9ThhWaFxBo8v7KpoVWWDgXwtGlkM'}
       options={{
-        api_host: 'https://us.i.posthog.com',
+        api_host: 'https://pickle.superwall.com',
         defaults: '2025-05-24',
         capture_exceptions: true, // This enables capturing exceptions using Error Tracking, set to false if you don't want this
         debug: true,

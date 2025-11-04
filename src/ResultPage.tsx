@@ -360,7 +360,7 @@ export function ResultPage({ slug }: ResultPageProps) {
           onClick={() => navigate('/')}
           className="bg-white/80 !rounded-full"
         >
-          <ArrowLeft className="w-5 h-5" />
+          <ArrowLeft className="!w-5 !h-5" />
         </Button>
         <HistoryButton onClick={() => setIsHistoryOpen(true)} />
       </div>

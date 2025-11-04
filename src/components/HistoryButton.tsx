@@ -13,7 +13,7 @@ export function HistoryButton({ onClick }: HistoryButtonProps) {
       onClick={onClick}
       className="bg-white/80 !rounded-full"
     >
-      <History className="w-5 h-5" />
+      <History className="!w-5 !h-5" />
     </Button>
   );
 }

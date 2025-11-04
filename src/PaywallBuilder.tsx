@@ -459,9 +459,11 @@ export function PaywallBuilder() {
       <HistorySidebar isOpen={isHistoryOpen} onClose={() => setIsHistoryOpen(false)} />
       
       {/* History Button */}
-      <div className="fixed top-4 left-4 z-30">
-        <HistoryButton onClick={() => setIsHistoryOpen(true)} />
-      </div>
+      {!isLoading && (
+        <div className="fixed top-4 left-4 z-30">
+          <HistoryButton onClick={() => setIsHistoryOpen(true)} />
+        </div>
+      )}
       
       <div></div>
       

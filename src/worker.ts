@@ -390,6 +390,10 @@ app.post('/api/emails', async (c) => {
 
     // Push email to Attio webhook
     try {
+      // Construct the experiment URL from the slug
+      const requestUrl = new URL(c.req.url);
+      const experimentUrl = `${requestUrl.origin}/r/${slug}`;
+      
       const attioResponse = await fetch('https://hooks.attio.com/w/4bf59dcc-084f-451f-856b-e83f8f0d3a5c/08f3bc96-8a94-48d6-943e-f8c8a60d0ef0', {
         method: 'POST',
         headers: {
@@ -398,6 +402,7 @@ app.post('/api/emails', async (c) => {
         body: JSON.stringify({
           email: email,
           leadMagnet: 'paywallexperiments.com',
+          context: experimentUrl,
         }),
       });
 

@@ -2,6 +2,7 @@
 
 import { Hono } from 'hono';
 import OpenAI from "openai";
+import Exa from "exa-js";
 import { EXPERIMENT_PROMPT } from "./prompt";
 import { generateSlug, saveResultToR2, saveImageToR2, getResultFromR2 } from "./utils/storage";
 import { saveEmailToD1, saveGenerationToD1, updateGenerationEmailForSlug } from "./utils/database";
@@ -11,6 +12,7 @@ import type { ResultData, StoredImage } from "./types/result";
 type Bindings = {
   OPENROUTER_API_KEY: string;
   OPENROUTER_URL: string;
+  EXA_API_KEY: string;
   STORAGE: R2Bucket;
   DB: D1Database;
   TURNSTILE_SECRET_KEY?: string;
@@ -32,34 +34,48 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-// API Routes
-app.get('/api/hello', (c) => {
-  return c.json({
-    message: 'Hello, world!',
-    method: 'GET',
-  });
-});
-
-app.put('/api/hello', (c) => {
-  return c.json({
-    message: 'Hello, world!',
-    method: 'PUT',
-  });
-});
-
-app.get('/api/hello/:name', (c) => {
-  const name = c.req.param('name');
-  return c.json({
-    message: `Hello, ${name}!`,
-  });
-});
-
 // Get Turnstile site key (public key)
 app.get('/api/turnstile-site-key', (c) => {
   const siteKey = c.env.TURNSTILE_SITE_KEY || '';
   return c.json({
     siteKey: siteKey,
   });
+});
+
+// Crawl App Store URL using Exa API
+app.post('/api/appstore', async (c) => {
+  try {
+    const { id } = await c.req.json();
+    
+    if (!id) {
+      return c.json({ error: "App ID is required" }, 400);
+    }
+
+    // Validate that id is a string or number
+    const appId = String(id).trim();
+    if (!appId) {
+      return c.json({ error: "App ID cannot be empty" }, 400);
+    }
+
+    // Construct App Store URL from ID
+    const appStoreUrl = `https://apps.apple.com/us/app/id${appId}`;
+
+    const exa = new Exa(c.env.EXA_API_KEY);
+    
+    const result = await exa.getContents(
+      [appStoreUrl],
+      {
+        text: true
+      }
+    );
+
+    return c.json(result);
+  } catch (error) {
+    console.error("[Worker] Error in /api/appstore:", error);
+    return c.json({
+      error: error instanceof Error ? error.message : "Unknown error"
+    }, 500);
+  }
 });
 
 app.post('/api/generate', async (c) => {
@@ -122,7 +138,7 @@ app.post('/api/generate', async (c) => {
     // Check for email cookie or header
     const cookieHeader = c.req.header('Cookie') || '';
     const emailCookieMatch = cookieHeader.match(/paywall_ai_email=([^;]+)/);
-    const email = emailCookieMatch ? decodeURIComponent(emailCookieMatch[1]) : undefined;
+    const email = emailCookieMatch && emailCookieMatch[1] ? decodeURIComponent(emailCookieMatch[1]) : undefined;
     
     // Get user agent for logging
     const userAgent = c.req.header('User-Agent') || undefined;
@@ -187,7 +203,7 @@ app.post('/api/generate', async (c) => {
     console.log("[Worker] Calling OpenAI API");
 
     const response = await openai.chat.completions.create({
-      model: "openai/gpt-5:nitro",
+      model: "openrouter/polaris-alpha",
       reasoning_effort: "minimal",
       messages: [
         {
@@ -372,6 +388,29 @@ app.post('/api/emails', async (c) => {
       console.log("[Worker] No generation found with null email for slug:", slug);
     }
 
+    // Push email to Attio webhook
+    try {
+      const attioResponse = await fetch('https://hooks.attio.com/w/4bf59dcc-084f-451f-856b-e83f8f0d3a5c/08f3bc96-8a94-48d6-943e-f8c8a60d0ef0', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: JSON.stringify({
+          email: email,
+          leadMagnet: 'paywallexperiments.com',
+        }),
+      });
+
+      if (!attioResponse.ok) {
+        console.error("[Worker] Attio webhook failed:", attioResponse.status, await attioResponse.text());
+      } else {
+        console.log("[Worker] Email pushed to Attio successfully");
+      }
+    } catch (error) {
+      // Don't fail the request if Attio fails
+      console.error("[Worker] Error pushing email to Attio:", error);
+    }
+
     return c.json({ success: true, message: "Email saved successfully" });
   } catch (error) {
     console.error("[Worker] Error saving email:", error);
@@ -441,7 +480,11 @@ app.get('*', async (c) => {
   
   const contentType = response.headers.get('content-type');
   console.log("[Worker] ASSETS response status:", response.status, "content-type:", contentType, "isStaticFile:", isStaticFile);
-  console.log("[Worker] Response headers:", Object.fromEntries(response.headers.entries()));
+  const headersObj: Record<string, string> = {};
+  response.headers.forEach((value, key) => {
+    headersObj[key] = value;
+  });
+  console.log("[Worker] Response headers:", headersObj);
 
   // If asset not found (404), only serve index.html for SPA routes
   // NEVER serve index.html for actual file requests (js, css, etc.)

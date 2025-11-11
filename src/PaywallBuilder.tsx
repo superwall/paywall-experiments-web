@@ -45,7 +45,7 @@ export function PaywallBuilder() {
 
   const placeholderTexts = [
     "How can I update this paywall to increase ARPU?",
-    "Based on your finding, which elements should be changed?",
+    "Based on your findings, which elements should be changed?",
     "What changes would you suggest to improve conversions?",
     "What modifications could reduce trial abandonment here?"
   ];
@@ -499,25 +499,27 @@ export function PaywallBuilder() {
               <span className="text-left">Generate paywall experiments in seconds</span>
             </div>
           )}
+          <div className={isLoading ? 'h-[80px] flex flex-col items-center justify-around' : ''}>
 
-          <h1 className="whitespace-normal md:whitespace-nowrap text-4xl md:text-5xl font-bold text-slate-900 mb-3 w-full min-h-[58px] px-4 md:px-2">
-            {isLoading ? (
-              <ShinyText
-                text={typingText}
-                disabled={false}
-                speed={2}
-                className="text-4xl mt-4"
-              />
-            ) : (
-              "AI Powered Paywall Experiments"
+            <h1 className="whitespace-normal md:whitespace-nowrap text-4xl md:text-5xl font-bold text-slate-900 mb-3 w-full min-h-[58px] px-4 md:px-2">
+              {isLoading ? (
+                <ShinyText
+                  text={typingText}
+                  disabled={false}
+                  speed={2}
+                  className="text-4xl mt-4"
+                />
+              ) : (
+                "AI Powered Paywall Experiments"
+              )}
+            </h1>
+            
+            {isLoading && (
+              <p className="text-xs text-slate-900/50 px-4">
+                Typically ~30s or less...
+              </p>
             )}
-          </h1>
-          
-          {isLoading && (
-            <p className="text-xs text-slate-900/50 px-4">
-              Typically ~30s or less...
-            </p>
-          )}
+          </div>
     
           {!isLoading && (
             <p className="text-slate-600 md:text-lg px-4">
@@ -532,7 +534,7 @@ export function PaywallBuilder() {
         {!isLoading && (
           <div className="bg-white rounded-2xl border border-[0.5px] border-slate-200 p-3 shadow-lg shadow-slate-200/40 relative">
             {/* Suggestions */}
-            {isInputFocused && (
+            {isInputFocused && !prompt.trim() && (
               <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl border border-[0.5px] border-slate-200 shadow-lg shadow-slate-200/40 overflow-hidden z-10">
                 {placeholderTexts.map((suggestion, index) => (
                   <button

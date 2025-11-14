@@ -203,7 +203,7 @@ app.post('/api/generate', async (c) => {
     console.log("[Worker] Calling OpenAI API");
 
     const response = await openai.chat.completions.create({
-      model: "openai/gpt-5.1",
+      model: "openai/gpt-5:nitro",
       reasoning_effort: "minimal",
       messages: [
         {

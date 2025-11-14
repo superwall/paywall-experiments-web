@@ -201,29 +201,10 @@ export function PaywallBuilder() {
   const handleSubmit = async () => {
     if (!prompt.trim() && uploadedImages.length === 0) return;
 
-    // Execute Turnstile challenge if widget is available and configured
-    if (turnstileWidgetIdRef.current && (window as any).turnstile && turnstileSiteKey) {
-      try {
-        turnstileTokenRef.current = null; // Reset token
-        await (window as any).turnstile.execute(turnstileWidgetIdRef.current);
-        
-        // Wait for token (with timeout)
-        let attempts = 0;
-        while (!turnstileTokenRef.current && attempts < 50) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-          attempts++;
-        }
-        
-        if (!turnstileTokenRef.current) {
-          console.warn('[Frontend] Turnstile token not received in time');
-        }
-      } catch (error) {
-        console.error('[Frontend] Turnstile execution failed:', error);
-        // Continue anyway - backend will handle missing token
-      }
-    }
+    // Set loading state immediately for better UX
+    setIsLoading(true);
 
-    // Track generation begin
+    // Track generation begin immediately
     if (posthog) {
       const email = getEmail();
       const imageCount = uploadedImages.length;
@@ -235,14 +216,73 @@ export function PaywallBuilder() {
       });
     }
 
-    // Scroll to top
+    // Scroll to top immediately
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
     console.log("[Frontend] Starting request...");
     console.log("[Frontend] Prompt:", prompt);
     console.log("[Frontend] Number of images:", uploadedImages.length);
 
-    setIsLoading(true);
+    // Execute Turnstile challenge if widget is available and configured
+    if (turnstileWidgetIdRef.current && (window as any).turnstile && turnstileSiteKey) {
+      try {
+        console.log('[Frontend] Starting Turnstile challenge');
+        turnstileTokenRef.current = null; // Reset token
+        
+        // Create a promise that resolves when the token is received
+        const tokenPromise = new Promise<string>((resolve, reject) => {
+          let resolved = false;
+          
+          // Set up a temporary callback handler
+          const checkToken = () => {
+            if (turnstileTokenRef.current && !resolved) {
+              resolved = true;
+              resolve(turnstileTokenRef.current);
+            }
+          };
+          
+          // Execute the challenge
+          (window as any).turnstile.execute(turnstileWidgetIdRef.current);
+          
+          // Poll for the token
+          const pollInterval = setInterval(() => {
+            checkToken();
+            if (resolved) {
+              clearInterval(pollInterval);
+            }
+          }, 100);
+          
+          // Set a timeout
+          setTimeout(() => {
+            clearInterval(pollInterval);
+            if (!resolved) {
+              resolved = true;
+              reject(new Error('Turnstile token timeout'));
+            }
+          }, 10000); // 10 second timeout
+        });
+        
+        // Wait for the token
+        try {
+          await tokenPromise;
+          console.log('[Frontend] Turnstile token successfully received');
+        } catch (error) {
+          console.error('[Frontend] Failed to get Turnstile token:', error);
+          // Reset the widget for retry
+          if (turnstileWidgetIdRef.current && (window as any).turnstile) {
+            (window as any).turnstile.reset(turnstileWidgetIdRef.current);
+          }
+          alert('Security verification timed out. Please try again.');
+          setIsLoading(false); // Reset loading state on error
+          return;
+        }
+      } catch (error) {
+        console.error('[Frontend] Turnstile execution failed:', error);
+        alert('Security verification failed. Please try again.');
+        setIsLoading(false); // Reset loading state on error
+        return;
+      }
+    }
 
     try {
       const formData = new FormData();

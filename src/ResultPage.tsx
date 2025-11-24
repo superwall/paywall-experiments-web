@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,34 @@ export function ResultPage({ slug }: ResultPageProps) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isDebug = searchParams.get('debug') === 'true';
+
+  const handleVisitSuperwallClick = useCallback(() => {
+    if (posthog) {
+      posthog.capture(POSTHOG_EVENTS.VISIT_SUPERWALL_CLICKED, {
+        slug: slug,
+      });
+    }
+
+    if (!hasEmail()) {
+      return;
+    }
+
+    fetch('/api/customerio/events', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        event: POSTHOG_EVENTS.VISIT_SUPERWALL_CLICKED,
+        properties: {
+          slug: slug,
+        },
+      }),
+      credentials: 'include',
+    }).catch((error) => {
+      console.error('[ResultPage] Failed to send Customer.io event', error);
+    });
+  }, [posthog, slug]);
 
   // Check for email on mount
   useEffect(() => {
@@ -500,14 +528,7 @@ export function ResultPage({ slug }: ResultPageProps) {
               href="https://superwall.com?ref=paywallexperiments" 
               target="_blank" 
               rel="noopener noreferrer"
-              onClick={() => {
-                // Track visit superwall clicked
-                if (posthog) {
-                  posthog.capture(POSTHOG_EVENTS.VISIT_SUPERWALL_CLICKED, {
-                    slug: slug,
-                  });
-                }
-              }}
+              onClick={handleVisitSuperwallClick}
             >
               <span className="hidden md:block">Visit</span> Superwall <ArrowRight className="w-4 h-4 " />
             </a>
@@ -541,4 +562,3 @@ export function ResultPage({ slug }: ResultPageProps) {
 }
 
 export default ResultPage;
-

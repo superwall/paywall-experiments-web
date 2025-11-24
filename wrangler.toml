@@ -23,6 +23,8 @@ database_id = "1d2af265-365c-4cd9-b9ab-760be4d2f1f9"
 # - TURNSTILE_SECRET_KEY: Cloudflare Turnstile secret key
 # - TURNSTILE_SITE_KEY: Cloudflare Turnstile site key (public)
 # - EXA_API_KEY: Exa API key for crawling URLs
+# - CUSTOMER_IO_SITE_ID and CUSTOMER_IO_API_KEY for Customer.io tracking
+# - CUSTOMER_IO_REGION (optional, defaults to US)
 
 # Build configuration
 [build]

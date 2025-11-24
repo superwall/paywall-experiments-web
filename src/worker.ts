@@ -7,6 +7,13 @@ import { EXPERIMENT_PROMPT } from "./prompt";
 import { generateSlug, saveResultToR2, saveImageToR2, getResultFromR2 } from "./utils/storage";
 import { saveEmailToD1, saveGenerationToD1, updateGenerationEmailForSlug } from "./utils/database";
 import type { ResultData, StoredImage } from "./types/result";
+import {
+  identifyCustomer,
+  trackCustomerIoEvent,
+  extractEmailFromCookie,
+  isCustomerIoEnabled,
+} from "./utils/customerIo";
+import type { CustomerIoEventName } from "./utils/customerIo";
 
 // Define environment bindings type
 type Bindings = {
@@ -17,12 +24,20 @@ type Bindings = {
   DB: D1Database;
   TURNSTILE_SECRET_KEY?: string;
   TURNSTILE_SITE_KEY?: string;
+  CUSTOMER_IO_SITE_ID?: string;
+  CUSTOMER_IO_API_KEY?: string;
+  CUSTOMER_IO_REGION?: string;
   ASSETS: {
     fetch: (request: Request) => Promise<Response>;
   };
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
+const CUSTOMER_IO_EVENT_WHITELIST: CustomerIoEventName[] = [
+  "generation_complete",
+  "email_entered",
+  "visit_superwall_clicked",
+];
 
 // Utility function to convert ArrayBuffer to base64 using Web APIs
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -136,9 +151,8 @@ app.post('/api/generate', async (c) => {
     }
 
     // Check for email cookie or header
-    const cookieHeader = c.req.header('Cookie') || '';
-    const emailCookieMatch = cookieHeader.match(/paywall_ai_email=([^;]+)/);
-    const email = emailCookieMatch && emailCookieMatch[1] ? decodeURIComponent(emailCookieMatch[1]) : undefined;
+    const cookieHeader = c.req.header('Cookie') || null;
+    const email = extractEmailFromCookie(cookieHeader);
     
     // Get user agent for logging
     const userAgent = c.req.header('User-Agent') || undefined;
@@ -157,6 +171,7 @@ app.post('/api/generate', async (c) => {
     // Get image URLs if provided
     const imageUrlsJson = formData.get("imageUrls") as string | null;
     const imageUrls: string[] = imageUrlsJson ? JSON.parse(imageUrlsJson) : [];
+    const totalImageCount = images.length + imageUrls.length;
 
     console.log("[Worker] Prompt:", userPrompt);
     console.log("[Worker] Number of file images:", images.length);
@@ -204,7 +219,6 @@ app.post('/api/generate', async (c) => {
 
     const response = await openai.chat.completions.create({
       model: "openai/gpt-5:nitro",
-      reasoning_effort: "minimal",
       messages: [
         {
           role: "system",
@@ -283,6 +297,15 @@ app.post('/api/generate', async (c) => {
     );
     console.log("[Worker] Saved generation to D1 database");
 
+    if (email) {
+      await trackCustomerIoEvent(env, email, "generation_complete", {
+        prompt: userPrompt || "",
+        image_count: totalImageCount,
+        slug,
+        has_email: true,
+      });
+    }
+
     return c.json({
       generatedOutput: messageContent,
       slug: slug,
@@ -310,9 +333,8 @@ app.get('/api/results/:slug', async (c) => {
     }
 
     // Check for email cookie
-    const cookieHeader = c.req.header('Cookie') || '';
-    const emailCookieMatch = cookieHeader.match(/paywall_ai_email=([^;]+)/);
-    const hasEmail = !!emailCookieMatch;
+    const cookieHeader = c.req.header('Cookie') || null;
+    const hasEmail = !!extractEmailFromCookie(cookieHeader);
     console.log("[Worker] Email cookie found:", hasEmail);
 
     const r2Key = `results/${slug}.json`;
@@ -388,11 +410,11 @@ app.post('/api/emails', async (c) => {
       console.log("[Worker] No generation found with null email for slug:", slug);
     }
 
+    const requestUrl = new URL(c.req.url);
+    const experimentUrl = `${requestUrl.origin}/r/${slug}`;
+
     // Push email to Attio webhook
     try {
-      // Construct the experiment URL from the slug
-      const requestUrl = new URL(c.req.url);
-      const experimentUrl = `${requestUrl.origin}/r/${slug}`;
       
       const attioResponse = await fetch('https://hooks.attio.com/w/4bf59dcc-084f-451f-856b-e83f8f0d3a5c/08f3bc96-8a94-48d6-943e-f8c8a60d0ef0', {
         method: 'POST',
@@ -416,12 +438,69 @@ app.post('/api/emails', async (c) => {
       console.error("[Worker] Error pushing email to Attio:", error);
     }
 
+    await identifyCustomer(c.env, email, {
+      email,
+      slug,
+      experiment_url: experimentUrl,
+      source: 'paywallexperiments.com',
+      user_agent: userAgent || null,
+      ip_address: ipAddress || null,
+      consent: true,
+      captured_at: new Date().toISOString(),
+    });
+
+    await trackCustomerIoEvent(c.env, email, "email_entered", {
+      slug,
+      email,
+    });
+
     return c.json({ success: true, message: "Email saved successfully" });
   } catch (error) {
     console.error("[Worker] Error saving email:", error);
     return c.json({
       error: error instanceof Error ? error.message : "Unknown error"
     }, 500);
+  }
+});
+
+app.post('/api/customerio/events', async (c) => {
+  try {
+    if (!isCustomerIoEnabled(c.env)) {
+      return c.json({ success: false, disabled: true });
+    }
+
+    const cookieHeader = c.req.header('Cookie') || null;
+    const email = extractEmailFromCookie(cookieHeader);
+
+    if (!email) {
+      return c.json({ success: false, error: "email_required" });
+    }
+
+    let body: { event?: CustomerIoEventName; properties?: Record<string, unknown> };
+    try {
+      body = await c.req.json<{
+        event?: CustomerIoEventName;
+        properties?: Record<string, unknown>;
+      }>();
+    } catch {
+      return c.json({ error: "invalid_json" }, 400);
+    }
+
+    const event = body.event;
+    if (!event || !CUSTOMER_IO_EVENT_WHITELIST.includes(event)) {
+      return c.json({ error: "unsupported_event" }, 400);
+    }
+
+    const properties = (body.properties && typeof body.properties === 'object')
+      ? body.properties
+      : {};
+
+    await trackCustomerIoEvent(c.env, email, event, properties);
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("[Worker] Error forwarding Customer.io event:", error);
+    return c.json({ error: "customerio_event_failed" }, 500);
   }
 });
 

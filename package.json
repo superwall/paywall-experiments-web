@@ -22,7 +22,7 @@
     "hono": "^4.10.3",
     "lucide-react": "^0.545.0",
     "nanoid": "^5.1.6",
-    "openai": "^6.7.0",
+    "openai": "^6.9.0",
     "posthog-js": "^1.283.0",
     "postprocessing": "^6.37.8",
     "react": "^19",

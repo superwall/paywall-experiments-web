@@ -19,3 +19,16 @@ bun start
 ```
 
 This project was created using `bun init` in bun v1.3.1. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+
+## Customer.io Integration
+
+Set the following secrets if you want Customer.io identify & event tracking enabled:
+
+```bash
+wrangler secret put CUSTOMER_IO_SITE_ID
+wrangler secret put CUSTOMER_IO_API_KEY
+# Optional: defaults to US. Set to `eu` for the EU data center.
+wrangler secret put CUSTOMER_IO_REGION
+```
+
+Without these secrets, the Worker automatically skips Customer.io calls so local development continues to work.

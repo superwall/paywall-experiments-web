@@ -57,13 +57,19 @@ async function sendCustomerIoRequest(
 
 export async function identifyCustomer(
   env: CustomerIoEnv,
-  email: string,
+  email: string | undefined,
   traits: Record<string, unknown>
 ): Promise<void> {
-  if (!email || !isCustomerIoEnabled(env)) return;
+  if (!isCustomerIoEnabled(env)) return;
+
+  const normalizedEmail = email?.trim();
+  if (!normalizedEmail) {
+    console.error("[Customer.io] Identify requires an email", { traits });
+    return;
+  }
 
   try {
-    await sendCustomerIoRequest(env, `/customers/${encodeURIComponent(email)}`, {
+    await sendCustomerIoRequest(env, `/customers/${encodeURIComponent(normalizedEmail)}`, {
       method: "PUT",
       body: JSON.stringify(traits),
     });
@@ -74,19 +80,24 @@ export async function identifyCustomer(
 
 export async function trackCustomerIoEvent(
   env: CustomerIoEnv,
-  email: string,
+  email: string | undefined,
   event: CustomerIoEventName,
   data: Record<string, unknown>
 ): Promise<void> {
-  if (!email || !isCustomerIoEnabled(env)) return;
+  if (!isCustomerIoEnabled(env)) return;
+
+  const normalizedEmail = email?.trim();
+  if (!normalizedEmail) {
+    console.error("[Customer.io] Event tracking requires an email", { event, data });
+    return;
+  }
 
   try {
-    await sendCustomerIoRequest(env, "/events", {
+    await sendCustomerIoRequest(env, `/customers/${encodeURIComponent(normalizedEmail)}/events`, {
       method: "POST",
       body: JSON.stringify({
         name: event,
         data,
-        customer_id: email,
       }),
     });
   } catch (error) {

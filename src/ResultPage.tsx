@@ -106,12 +106,15 @@ export function ResultPage({ slug }: ResultPageProps) {
   // Memoize markdown components to prevent re-render loop
   const markdownComponents = useMemo(() => ({
     h1: () => null, // Hide H1 since we show it in the title
-    h2: ({node, ...props}: any) => <h2 className="text-slate-400 text-lg font-medium uppercase tracking-wider py-2" {...props} />,
-    h3: ({node, ...props}: any) => <h3 className="text-slate-400 text-md font-medium uppercase tracking-wider py-2" {...props} />,
-    h4: ({node, ...props}: any) => <h4 className="text-slate-400 text-md font-normal uppercase tracking-wider py-2" {...props} />,
-    h5: ({node, ...props}: any) => <h5 className="text-slate-400 text-md font-normal uppercase tracking-wider py-2" {...props} />,
-    h6: ({node, ...props}: any) => <h6 className="text-slate-400 text-md font-normal uppercase tracking-wider py-2" {...props} />,
-    p: ({node, ...props}: any) => <p className="text-slate-900 text-lg mb-4" {...props} />,
+    h2: ({node, ...props}: any) => <h2 className="!text-slate-400 text-lg font-medium uppercase tracking-wider py-2" {...props} />,
+    h3: ({node, ...props}: any) => <h3 className="!text-slate-400 text-md font-medium uppercase tracking-wider py-2" {...props} />,
+    h4: ({node, ...props}: any) => <h4 className="!text-slate-400 text-md font-normal uppercase tracking-wider py-2" {...props} />,
+    h5: ({node, ...props}: any) => <h5 className="!text-slate-400 text-md font-normal uppercase tracking-wider py-2" {...props} />,
+    h6: ({node, ...props}: any) => <h6 className="!text-slate-400 text-md font-normal uppercase tracking-wider py-2" {...props} />,
+    p: ({node, ...props}: any) => <p className="!text-slate-900 text-lg mb-4" {...props} />,
+    ul: ({node, ...props}: any) => <ul className="!text-slate-900 !list-disc !pl-5 !my-1" {...props} />,
+    ol: ({node, ...props}: any) => <ol className="!text-slate-900 !list-decimal !pl-5 !my-1" {...props} />,
+    li: ({node, ...props}: any) => <li className="!text-slate-900 !my-1" {...props} />,
   }), []);
 
   useEffect(() => {
@@ -478,7 +481,7 @@ export function ResultPage({ slug }: ResultPageProps) {
         {/* Content */}
         <div className="mb-12 space-y-4 px-4">
           <div className="!px-2 !pt-1 w-full bg-transparent text-slate-900">
-            <div className="prose prose-slate max-w-none prose-ul:list-disc prose-ul:pl-5 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-1">
+            <div className="max-w-none prose-ul:list-disc prose-ul:pl-5 prose-ol:list-decimal prose-ol:pl-5 prose-li:my-1">
               <Markdown components={markdownComponents}>{displayContent}</Markdown>
             </div>
           </div>

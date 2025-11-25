@@ -285,6 +285,13 @@ app.post('/api/generate', async (c) => {
     await saveResultToR2(env.STORAGE, slug, resultData);
     console.log("[Worker] Saved result to R2");
 
+    const imageAttributes = storedImages.reduce<Record<string, string>>((acc, image, index) => {
+      if (image.url) {
+        acc[`image_${index + 1}`] = image.url;
+      }
+      return acc;
+    }, {});
+
     // Save generation to D1 database
     await saveGenerationToD1(
       env.DB,
@@ -303,6 +310,8 @@ app.post('/api/generate', async (c) => {
         image_count: totalImageCount,
         slug,
         has_email: true,
+        generated_output: messageContent,
+        ...imageAttributes,
       });
     }
 
@@ -442,11 +451,11 @@ app.post('/api/emails', async (c) => {
       email,
       slug,
       experiment_url: experimentUrl,
-      source: 'paywallexperiments.com',
       user_agent: userAgent || null,
       ip_address: ipAddress || null,
       consent: true,
       captured_at: new Date().toISOString(),
+      used_paywall_experiments: true,
     });
 
     await trackCustomerIoEvent(c.env, email, "email_entered", {

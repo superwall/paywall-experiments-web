@@ -91,3 +91,22 @@ export async function saveImageToR2(
 
   return key;
 }
+
+export async function saveNamedImageToR2(
+  storage: R2Bucket,
+  slug: string,
+  filename: string,
+  imageData: ArrayBuffer,
+  contentType: string
+): Promise<string> {
+  const safeFilename = filename.replace(/^\/+/, '').replace(/\.\.+/g, '.');
+  const key = `images/${slug}/${safeFilename}`;
+
+  await storage.put(key, imageData, {
+    httpMetadata: {
+      contentType,
+    },
+  });
+
+  return key;
+}

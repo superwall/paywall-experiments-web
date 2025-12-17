@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowRight, Loader2, Redo, Redo2, RefreshCcw, RotateCcw, Share2, Undo, UnlockIcon, ArrowLeft } from "lucide-react";
+import { ArrowRight, Loader2, RotateCcw, Share2, UnlockIcon, ArrowLeft } from "lucide-react";
 import Markdown from "react-markdown";
 import type { ResultData } from "./types/result";
 import { ExamplesFooter } from "./components/ExamplesFooter";
@@ -23,8 +23,16 @@ export function ResultPage({ slug }: ResultPageProps) {
   const [result, setResult] = useState<ResultData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isGeneratingVariant, setIsGeneratingVariant] = useState(false);
+  const [variantError, setVariantError] = useState<string | null>(null);
+  const variantJobRef = useRef<{ slug: string; controller: AbortController; pollTimeout: number | null } | null>(null);
+  const [variantCacheBust, setVariantCacheBust] = useState<number>(0);
+  const controlImageRef = useRef<HTMLImageElement>(null);
+  const [controlImageWidth, setControlImageWidth] = useState<number | null>(null);
+  const [isCompareOpen, setIsCompareOpen] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
   const [hasOverflow, setHasOverflow] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const [email, setEmailState] = useState<string>("");
   const [showEmailInput, setShowEmailInput] = useState(false);
   const [isSubmittingEmail, setIsSubmittingEmail] = useState(false);
@@ -34,6 +42,121 @@ export function ResultPage({ slug }: ResultPageProps) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isDebug = searchParams.get('debug') === 'true';
+
+  const startVariantGeneration = useCallback(async (data: ResultData) => {
+    // Already have it
+    if (data.variantImageUrl) return;
+    // Need a control image to base the variant on
+    if (!data.images || data.images.length === 0) return;
+    // Don't start multiple jobs for the same slug
+    if (variantJobRef.current?.slug === slug) return;
+
+    // Cancel any previous job (defensive)
+    if (variantJobRef.current) {
+      variantJobRef.current.controller.abort();
+      if (variantJobRef.current.pollTimeout) window.clearTimeout(variantJobRef.current.pollTimeout);
+      variantJobRef.current = null;
+    }
+
+    const controller = new AbortController();
+    variantJobRef.current = { slug, controller, pollTimeout: null };
+
+    setIsGeneratingVariant(true);
+    setVariantError(null);
+
+    const variantUrl = `/api/images/${slug}/variant.png`;
+    const startedAt = Date.now();
+
+    const poll = async () => {
+      const job = variantJobRef.current;
+      if (!job || job.slug !== slug) return;
+      if (job.controller.signal.aborted) return;
+
+      if (Date.now() - startedAt > 90_000) {
+        setIsGeneratingVariant(false);
+        setVariantError("variant_generation_timeout");
+        variantJobRef.current = null;
+        return;
+      }
+
+      try {
+        const res = await fetch(variantUrl, {
+          method: "HEAD",
+          cache: "no-store",
+          credentials: "include",
+          signal: job.controller.signal,
+        });
+
+        if (res.ok) {
+          setResult((prev) => (prev ? { ...prev, variantImageUrl: variantUrl } : prev));
+          setVariantCacheBust(Date.now());
+          setIsGeneratingVariant(false);
+          variantJobRef.current = null;
+          return;
+        }
+      } catch (e) {
+        if ((e as any)?.name === "AbortError") return;
+      }
+
+      const next = window.setTimeout(poll, 500);
+      if (variantJobRef.current?.slug === slug) {
+        variantJobRef.current.pollTimeout = next;
+      } else {
+        window.clearTimeout(next);
+      }
+    };
+
+    // Start polling immediately
+    poll();
+
+    // Kick off generation (do not block UI)
+    try {
+      const formData = new FormData();
+      formData.append("slug", slug);
+      formData.append("generatedOutput", data.generatedOutput || "");
+      formData.append("prompt", data.prompt || "");
+      const imageUrls = data.images.map((img) => img.url).filter(Boolean);
+      if (imageUrls.length > 0) {
+        formData.append("imageUrls", JSON.stringify(imageUrls));
+      }
+
+      const response = await fetch("/api/generate-variant-image", {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(`variant_generation_failed:${response.status}:${text}`);
+      }
+    } catch (e) {
+      if ((e as any)?.name === "AbortError") return;
+      console.warn("[ResultPage] Variant generation request failed:", e);
+      setVariantError(e instanceof Error ? e.message : "variant_generation_failed");
+      setIsGeneratingVariant(false);
+      // Stop polling if the generation request failed
+      const job = variantJobRef.current;
+      if (job?.slug === slug) {
+        job.controller.abort();
+        if (job.pollTimeout) window.clearTimeout(job.pollTimeout);
+        variantJobRef.current = null;
+      }
+    }
+  }, [slug]);
+
+  const handleRetryVariant = useCallback(() => {
+    if (!result) return;
+    // Cancel current job if any
+    if (variantJobRef.current?.slug === slug) {
+      variantJobRef.current.controller.abort();
+      if (variantJobRef.current.pollTimeout) window.clearTimeout(variantJobRef.current.pollTimeout);
+      variantJobRef.current = null;
+    }
+    setVariantError(null);
+    startVariantGeneration(result);
+  }, [result, slug, startVariantGeneration]);
 
   const handleVisitSuperwallClick = useCallback(() => {
     if (posthog) {
@@ -103,6 +226,20 @@ export function ResultPage({ slug }: ResultPageProps) {
     };
   }, [showEmailInput]);
 
+  // Track mobile viewport (≤1024px)
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= 1024);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => {
+      window.removeEventListener('resize', checkMobile);
+    };
+  }, []);
+
   // Memoize markdown components to prevent re-render loop
   const markdownComponents = useMemo(() => ({
     h1: () => null, // Hide H1 since we show it in the title
@@ -125,6 +262,8 @@ export function ResultPage({ slug }: ResultPageProps) {
         console.log("[ResultPage] Starting fetch for slug:", slug);
         setLoading(true);
         setError(null);
+        setVariantError(null);
+        setIsGeneratingVariant(false);
         
         const url = `/api/results/${slug}`;
         console.log("[ResultPage] Fetching from URL:", url);
@@ -151,6 +290,11 @@ export function ResultPage({ slug }: ResultPageProps) {
           createdAt: data.createdAt
         });
         setResult(data);
+        // Start variant generation in the background (non-blocking)
+        // Do this after the result is loaded so it never blocks the text UX.
+        queueMicrotask(() => {
+          startVariantGeneration(data);
+        });
         
         // Save to history if not already saved
         const title = data.generatedOutput.trim().split('\n')[0]?.replace(/^#\s*/, '') || "Paywall Experiment";
@@ -177,6 +321,17 @@ export function ResultPage({ slug }: ResultPageProps) {
     }
 
     fetchResult();
+  }, [slug, startVariantGeneration]);
+
+  // Cleanup any running variant generation job on slug change/unmount
+  useEffect(() => {
+    return () => {
+      if (variantJobRef.current) {
+        variantJobRef.current.controller.abort();
+        if (variantJobRef.current.pollTimeout) window.clearTimeout(variantJobRef.current.pollTimeout);
+        variantJobRef.current = null;
+      }
+    };
   }, [slug]);
 
   // Check for overflow when images load or window resizes
@@ -241,6 +396,37 @@ export function ResultPage({ slug }: ResultPageProps) {
       window.removeEventListener('resize', checkOverflow);
     };
   }, [result]);
+
+  // Track rendered control image width so the Variant placeholder matches it
+  useEffect(() => {
+    const updateWidth = () => {
+      const el = controlImageRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0) {
+        setControlImageWidth(rect.width);
+      }
+    };
+
+    updateWidth();
+    window.addEventListener('resize', updateWidth);
+
+    return () => {
+      window.removeEventListener('resize', updateWidth);
+    };
+  }, [result?.id, result?.images?.[0]?.url]);
+
+  // Close compare modal on Escape
+  useEffect(() => {
+    if (!isCompareOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsCompareOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isCompareOpen]);
 
   const handleCopyLink = async () => {
     const url = window.location.href;
@@ -348,6 +534,11 @@ export function ResultPage({ slug }: ResultPageProps) {
   console.log("[ResultPage] Extracted title:", title);
   console.log("[ResultPage] Rendering full result page");
 
+  const controlImageUrl = result.images[0]?.url;
+  const variantImageUrl = result.variantImageUrl
+    ? `${result.variantImageUrl}${result.variantImageUrl.includes('?') ? '&' : '?'}v=${variantCacheBust || 0}`
+    : undefined;
+
   const isContentTruncated = result.generatedOutput.length > 500 && !hasEmail();
   const displayContent = isContentTruncated 
     ? result.generatedOutput.substring(0, 500) + "..."
@@ -444,19 +635,142 @@ export function ResultPage({ slug }: ResultPageProps) {
         <div className="text-center mb-12">
 
           {/* Images */}
-          {result.images.length > 0 && (
-            <div 
+          {controlImageUrl && (
+            <div className="flex justify-center gap-6 mb-8 flex-wrap">
+              <div
+                className={`flex flex-col items-center gap-2 ${isMobile ? '' : 'cursor-pointer'}`}
+                onClick={isMobile ? undefined : () => setIsCompareOpen(true)}
+              >
+                <div className="text-xs uppercase tracking-wider text-slate-500">Control</div>
+                <img
+                  ref={controlImageRef}
+                  src={controlImageUrl}
+                  alt="Control"
+                  className={`h-[300px] md:h-[400px] w-auto rounded-2xl border border-[0.5px] object-contain bg-white ${isMobile ? '' : 'cursor-pointer'}`}
+                  onLoad={() => {
+                    const rect = controlImageRef.current?.getBoundingClientRect();
+                    if (rect?.width) setControlImageWidth(rect.width);
+                  }}
+                />
+              </div>
+              <div
+                className={`flex flex-col items-center gap-2 ${isMobile ? '' : 'cursor-pointer'}`}
+                onClick={isMobile ? undefined : () => {
+                  if (result.variantImageUrl) setIsCompareOpen(true);
+                }}
+              >
+                <div className="text-xs uppercase tracking-wider text-slate-500">Variant</div>
+                {variantImageUrl ? (
+                  <img
+                    src={variantImageUrl}
+                    alt="Variant"
+                    className={`h-[300px] md:h-[400px] w-auto rounded-2xl border border-[0.5px] object-contain bg-white ${isMobile ? '' : 'cursor-pointer'}`}
+                  />
+                ) : isGeneratingVariant ? (
+                  <div
+                    className="h-[300px] md:h-[400px] rounded-2xl border border-[0.5px] bg-slate-100 flex items-center justify-center animate-pulse"
+                    style={controlImageWidth ? { width: `${controlImageWidth}px` } : undefined}
+                  >
+                    <span className="text-slate-500 text-sm">Generating…</span>
+                  </div>
+                ) : variantError ? (
+                  <div
+                    className="h-[300px] md:h-[400px] rounded-2xl border border-[0.5px] bg-slate-50 flex flex-col items-center justify-center px-4 gap-3"
+                    style={controlImageWidth ? { width: `${controlImageWidth}px` } : undefined}
+                  >
+                    <span className="text-slate-500 text-sm">Variant unavailable</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        handleRetryVariant();
+                      }}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                ) : (
+                  <div
+                    className="h-[300px] md:h-[400px] rounded-2xl border border-[0.5px] bg-slate-50 flex items-center justify-center px-4 animate-pulse"
+                    style={controlImageWidth ? { width: `${controlImageWidth}px` } : undefined}
+                  >
+                    <span className="text-slate-500 text-sm">Generating…</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Fullscreen compare modal */}
+          {isCompareOpen && controlImageUrl && (
+            <div
+              className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+              onClick={() => setIsCompareOpen(false)}
+              role="dialog"
+              aria-modal="true"
+            >
+              <div
+                className="relative w-full max-w-6xl bg-white rounded-2xl border border-white/10 overflow-hidden"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="absolute top-3 right-3 z-10">
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="rounded-full bg-white/90"
+                    onClick={() => setIsCompareOpen(false)}
+                  >
+                    <span className="sr-only">Close</span>
+                    ×
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-0">
+                  <div className="border-b md:border-b-0 md:border-r border-slate-200">
+                    <div className="text-xs uppercase tracking-wider text-slate-500 py-3 text-center">Control</div>
+                    <div className="flex items-center justify-center pb-4">
+                      <img
+                        src={controlImageUrl}
+                        alt="Control fullscreen"
+                        className="h-[80vh] w-auto max-w-full md:max-w-[48vw] object-contain bg-slate-50 rounded-xl border border-slate-200"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-slate-500 py-3 text-center">Variant</div>
+                    <div className="flex items-center justify-center pb-4">
+                      {result.variantImageUrl ? (
+                        <img
+                          src={variantImageUrl}
+                          alt="Variant fullscreen"
+                          className="h-[80vh] w-auto max-w-full md:max-w-[48vw] object-contain bg-slate-50 rounded-xl border border-slate-200"
+                        />
+                      ) : (
+                        <div className="h-[80vh] w-auto max-w-full md:max-w-[48vw] aspect-[9/16] bg-slate-100 rounded-xl border border-slate-200 flex items-center justify-center animate-pulse">
+                          <span className="text-slate-500 text-sm">Generating…</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Any additional reference images (beyond the primary control) */}
+          {result.images.length > 1 && (
+            <div
               ref={scrollContainerRef}
               className="overflow-x-scroll scrollbar-hide"
             >
               <div className={`flex flex-row gap-2 ${hasOverflow ? 'justify-start' : 'justify-center'}`}>
                 <div className="!min-w-2 !min-h-2 "></div>
-                {result.images.map((image, index) => (
+                {result.images.slice(1).map((image, index) => (
                   <img
                     key={index}
                     src={image.url}
-                    alt={`Result image ${index + 1}`}
-                    className="h-[300px] md:h-[400px] w-auto flex-shrink-0 rounded-2xl border border-[0.5px] object-contain"
+                    alt={`Reference image ${index + 2}`}
+                    className="h-[180px] md:h-[220px] w-auto flex-shrink-0 rounded-2xl border border-[0.5px] object-contain bg-white"
                   />
                 ))}
                 <div className="!min-w-2 !min-h-2"></div>

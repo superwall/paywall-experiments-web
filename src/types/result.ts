@@ -10,4 +10,5 @@ export interface ResultData {
   prompt: string;
   generatedOutput: string;
   images: StoredImage[];
+  variantImageUrl?: string;
 }

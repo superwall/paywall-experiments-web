@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import OpenAI from "openai";
 import Exa from "exa-js";
 import { EXPERIMENT_PROMPT } from "./prompt";
-import { generateSlug, saveResultToR2, saveImageToR2, getResultFromR2 } from "./utils/storage";
+import { generateSlug, saveResultToR2, saveImageToR2, saveNamedImageToR2, getResultFromR2 } from "./utils/storage";
 import { saveEmailToD1, saveGenerationToD1, updateGenerationEmailForSlug } from "./utils/database";
 import type { ResultData, StoredImage } from "./types/result";
 import {
@@ -47,6 +47,61 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
     binary += String.fromCharCode(bytes[i]!);
   }
   return btoa(binary);
+}
+
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+function extractBase64ImageFromOpenAIResponse(response: any): { base64: string; mimeType: string } | null {
+  // OpenRouter Responses API: look for a completed image_generation_call with a data URL result
+  const output = response?.output;
+  if (Array.isArray(output)) {
+    for (let i = output.length - 1; i >= 0; i--) {
+      const item = output[i];
+      if (item?.type === 'image_generation_call' && item?.status === 'completed' && typeof item?.result === 'string') {
+        const result = item.result as string;
+        const match = result.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/);
+        if (match?.[1] && match?.[2]) {
+          return { mimeType: match[1], base64: match[2] };
+        }
+      }
+    }
+  }
+
+  // Prefer Responses API shapes
+  if (Array.isArray(output)) {
+    for (const item of output) {
+      const content = item?.content;
+      if (!Array.isArray(content)) continue;
+      for (const part of content) {
+        // Common OpenAI responses shape: { type: "output_image", b64_json: "..." }
+        if (part?.type?.includes?.("image")) {
+          const b64 = part?.b64_json || part?.image_base64 || part?.data;
+          const mimeType = part?.mime_type || part?.mimeType || "image/png";
+          if (typeof b64 === "string" && b64.length > 0) {
+            return { base64: b64, mimeType };
+          }
+        }
+      }
+    }
+  }
+
+  // Fallback: chat completions returning content string with data URL
+  const messageContent = response?.choices?.[0]?.message?.content;
+  if (typeof messageContent === "string") {
+    const match = messageContent.match(/data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)/);
+    if (match?.[1] && match?.[2]) {
+      return { mimeType: match[1], base64: match[2] };
+    }
+  }
+
+  return null;
 }
 
 // Get Turnstile site key (public key)
@@ -218,7 +273,7 @@ app.post('/api/generate', async (c) => {
     console.log("[Worker] Calling OpenAI API");
 
     const response = await openai.chat.completions.create({
-      model: "openai/gpt-5:nitro",
+      model: "anthropic/claude-opus-4.5:nitro",
       messages: [
         {
           role: "system",
@@ -324,6 +379,242 @@ app.post('/api/generate', async (c) => {
     return c.json({
       error: error instanceof Error ? error.message : "Unknown error"
     }, 500);
+  }
+});
+
+// Generate a "Variant" paywall image based on the recommended experiment and control screenshots
+app.post('/api/generate-variant-image', async (c) => {
+  try {
+    console.log("[Worker] /api/generate-variant-image - Request received");
+
+    const env = c.env;
+    const openai = new OpenAI({
+      apiKey: env.OPENROUTER_API_KEY,
+      baseURL: env.OPENROUTER_URL,
+    });
+
+    const formData = await c.req.formData();
+    const turnstileToken = formData.get("cf-turnstile-response") as string | null;
+
+    const ipAddress = c.req.header('CF-Connecting-IP') ||
+                      c.req.header('X-Forwarded-For')?.split(',')[0] ||
+                      undefined;
+
+    // On-demand variant generation should not block viewing results.
+    // If Turnstile is configured and a token is provided, verify it; otherwise proceed.
+    const isDevelopment = !env.TURNSTILE_SECRET_KEY || env.TURNSTILE_SECRET_KEY === '';
+    if (!isDevelopment && turnstileToken) {
+      const turnstileResponse = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          secret: env.TURNSTILE_SECRET_KEY,
+          response: turnstileToken,
+          remoteip: ipAddress,
+        }),
+      });
+
+      const turnstileResult = await turnstileResponse.json() as { success: boolean; 'error-codes'?: string[] };
+      if (!turnstileResult.success) {
+        return c.json({
+          error: "Turnstile verification failed",
+          error_codes: turnstileResult['error-codes'],
+        }, 400);
+      }
+    } else if (!isDevelopment && !turnstileToken) {
+      console.log("[Worker] Turnstile token missing for /api/generate-variant-image; proceeding without verification");
+    }
+
+    const slug = String(formData.get("slug") || "").trim();
+    const generatedOutput = String(formData.get("generatedOutput") || formData.get("experiment") || "").trim();
+    const userPrompt = String(formData.get("prompt") || "").trim();
+
+    if (!slug) {
+      return c.json({ error: "slug_required" }, 400);
+    }
+    if (!generatedOutput) {
+      return c.json({ error: "generated_output_required" }, 400);
+    }
+
+    // If already generated, return quickly
+    const variantKey = `images/${slug}/variant.png`;
+    const existingVariant = await env.STORAGE.get(variantKey);
+    if (existingVariant) {
+      const variantImageUrl = `/api/images/${slug}/variant.png`;
+      console.log("[Worker] Variant image already exists for slug:", slug);
+      return c.json({ variantImageUrl, cached: true });
+    }
+
+    // Collect images (same as /api/generate)
+    const images: File[] = [];
+    for (let i = 0; i < 5; i++) {
+      const image = formData.get(`image${i}`) as File | null;
+      if (image) images.push(image);
+    }
+
+    const imageUrlsJson = formData.get("imageUrls") as string | null;
+    const imageUrls: string[] = imageUrlsJson ? JSON.parse(imageUrlsJson) : [];
+
+    // Build OpenRouter Responses API input (message items with input_text/input_image parts)
+    const input: any[] = [];
+    const mainContent: any[] = [];
+
+    const timelineInstructions = generatedOutput.toLowerCase().includes("timeline")
+      ? `- A trial timeline, if asked to generate one, is usually laid out vertically, like a quiet progress indicator.
+
+<timeline-description>
+There's a single vertical line running down the left side. Along that line sit evenly spaced icons, one per step. Each marker represents a moment in time.
+
+To the right of each marker is a small block of text:
+– a short title in stronger weight (the time reference or milestone)
+– a lighter subtitle underneath explaining what happens then
+
+The current step is visually emphasized. That might mean a brighter color, a filled icon, or a subtle glow. Future steps are muted: thinner lines, lower contrast, simpler icons. Past steps are often checked or dimmed.
+
+Spacing is generous so each step reads as its own moment, not a paragraph. Colors are restrained, usually one accent color plus neutral grays, so the eye naturally moves from top to bottom.
+
+The whole thing should read at a glance as "now → soon → later," without needing to read every word.</timeline-description>`
+      : "";
+
+    const instructions = `You generate app UI screenshots.
+Task: Generate a single polished Variant paywall screenshot based on the provided Control screenshot(s) and the recommended experiment write-up
+- Keep typography and spacing clean, ensure copy is readable
+- Stay consistent with the Control app's style
+- Output: image only (no extra text)
+- respond with only 1 image, not a sequence, grid, or film strip of images
+${timelineInstructions ? "\n" + timelineInstructions : ""}`
+
+    const textParts: string[] = [instructions];
+    if (userPrompt) textParts.push(`User prompt:\n${userPrompt}`);
+    textParts.push(`Recommended experiment (markdown):\n${generatedOutput}`);
+
+    mainContent.push({
+      type: "input_text",
+      text: textParts.join("\n\n"),
+    });
+
+    // Add file images as input_image parts (data URLs)
+    for (const image of images) {
+      const arrayBuffer = await image.arrayBuffer();
+      const base64 = arrayBufferToBase64(arrayBuffer);
+      const mimeType = image.type || "image/jpeg";
+      mainContent.push({
+        type: "input_image",
+        image_url: `data:${mimeType};base64,${base64}`,
+        detail: "auto",
+      });
+    }
+
+    // Add URL images as input_image parts (direct URL)
+    // OpenRouter model execution may not be able to fetch relative/private URLs, so we fetch each URL in the Worker
+    // and embed it as a data URL.
+    const requestOrigin = new URL(c.req.url).origin;
+    for (const rawUrl of imageUrls) {
+      try {
+        if (!rawUrl) continue;
+
+        // If it's already a data URL, include as-is
+        if (rawUrl.startsWith("data:image/")) {
+          mainContent.push({
+            type: "input_image",
+            image_url: rawUrl,
+            detail: "auto",
+          });
+          continue;
+        }
+
+        const absoluteUrl = rawUrl.startsWith("/")
+          ? `${requestOrigin}${rawUrl}`
+          : rawUrl;
+
+        const imgRes = await fetch(absoluteUrl);
+        if (!imgRes.ok) {
+          console.warn("[Worker] Failed to fetch imageUrl for variant generation:", absoluteUrl, imgRes.status);
+          continue;
+        }
+
+        const contentType = imgRes.headers.get("content-type") || "image/jpeg";
+        const arrayBuffer = await imgRes.arrayBuffer();
+        const base64 = arrayBufferToBase64(arrayBuffer);
+        const dataUrl = `data:${contentType};base64,${base64}`;
+
+        mainContent.push({
+          type: "input_image",
+          image_url: dataUrl,
+          detail: "auto",
+        });
+      } catch (e) {
+        console.warn("[Worker] Error embedding imageUrl for variant generation:", rawUrl, e);
+      }
+    }
+
+    input.push({
+      role: "user",
+      type: "message",
+      content: mainContent,
+    });
+
+    console.log("[Worker] Calling image model for slug:", slug);
+
+    // Prefer OpenAI Responses API (best fit for image+text outputs across providers)
+    let modelResponse: any;
+    if ((openai as any).responses?.create) {
+      modelResponse = await (openai as any).responses.create({
+        model: "google/gemini-3-pro-image-preview:nitro",
+        input,
+        stream: false,
+        max_output_tokens: 0,
+      });
+    } else {
+      // Fallback to chat completions if Responses isn't available in this runtime
+      modelResponse = await openai.chat.completions.create({
+        model: "google/gemini-3-pro-image-preview:nitro",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You generate app UI screenshots. Output must be a single image of a paywall screen. " +
+              "Keep typography and spacing clean, ensure copy is readable, and do not include watermarks or extra text outside the screenshot.",
+          },
+          {
+            role: "user",
+            content: textParts.join("\n\n"),
+          },
+        ],
+        stream: false,
+      } as any);
+    }
+
+    const extracted = extractBase64ImageFromOpenAIResponse(modelResponse);
+    if (!extracted) {
+      console.error("[Worker] Failed to extract image from model response");
+      return c.json({ error: "image_generation_failed" }, 500);
+    }
+
+    const mimeType = extracted.mimeType || "image/png";
+    const imageBuffer = base64ToArrayBuffer(extracted.base64);
+    await saveNamedImageToR2(env.STORAGE, slug, "variant.png", imageBuffer, mimeType);
+
+    const variantImageUrl = `/api/images/${slug}/variant.png`;
+
+    // Update stored result JSON (best-effort)
+    try {
+      const existingResult = await getResultFromR2(env.STORAGE, slug);
+      if (existingResult) {
+        const updated: ResultData = {
+          ...existingResult,
+          variantImageUrl,
+        };
+        await saveResultToR2(env.STORAGE, slug, updated);
+      }
+    } catch (error) {
+      console.error("[Worker] Failed to update result JSON with variantImageUrl:", error);
+    }
+
+    return c.json({ variantImageUrl, cached: false });
+  } catch (error) {
+    console.error("[Worker] Error in /api/generate-variant-image:", error);
+    return c.json({ error: error instanceof Error ? error.message : "Unknown error" }, 500);
   }
 });
 
@@ -538,6 +829,28 @@ app.get('/api/images/:slug/:filename', async (c) => {
     return c.json({
       error: error instanceof Error ? error.message : "Unknown error"
     }, 500);
+  }
+});
+
+// HEAD endpoint for checking if an image exists in R2 (avoids downloading bytes)
+app.on('HEAD', '/api/images/:slug/:filename', async (c) => {
+  try {
+    const slug = c.req.param('slug');
+    const filename = c.req.param('filename');
+    const key = `images/${slug}/${filename}`;
+
+    const object = await c.env.STORAGE.get(key);
+    if (!object) {
+      return new Response(null, { status: 404 });
+    }
+
+    const headers = new Headers();
+    headers.set('Content-Type', object.httpMetadata?.contentType || 'image/jpeg');
+    headers.set('Cache-Control', 'no-store');
+    return new Response(null, { status: 200, headers });
+  } catch (error) {
+    console.error("[Worker] Error HEAD /api/images/:slug/:filename:", error);
+    return new Response(null, { status: 500 });
   }
 });
 

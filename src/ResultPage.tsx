@@ -659,7 +659,7 @@ export function ResultPage({ slug }: ResultPageProps) {
                   if (result.variantImageUrl) setIsCompareOpen(true);
                 }}
               >
-                <div className="text-xs uppercase tracking-wider text-slate-500">Variant</div>
+                <div className="text-xs uppercase tracking-wider text-slate-500">Variant (Beta)</div>
                 {variantImageUrl ? (
                   <img
                     src={variantImageUrl}
@@ -737,7 +737,7 @@ export function ResultPage({ slug }: ResultPageProps) {
                     </div>
                   </div>
                   <div>
-                    <div className="text-xs uppercase tracking-wider text-slate-500 py-3 text-center">Variant</div>
+                    <div className="text-xs uppercase tracking-wider text-slate-500 py-3 text-center">Variant (Beta)</div>
                     <div className="flex items-center justify-center pb-4">
                       {result.variantImageUrl ? (
                         <img

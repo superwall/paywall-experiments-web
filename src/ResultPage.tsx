@@ -158,6 +158,59 @@ export function ResultPage({ slug }: ResultPageProps) {
     startVariantGeneration(result);
   }, [result, slug, startVariantGeneration]);
 
+  const handleRegenerateVariant = useCallback(async () => {
+    if (!result) return;
+    // Need a control image to base the variant on
+    if (!result.images || result.images.length === 0) return;
+
+    // Cancel any current job/polling (variant already exists; we want a fresh image)
+    if (variantJobRef.current?.slug === slug) {
+      variantJobRef.current.controller.abort();
+      if (variantJobRef.current.pollTimeout) window.clearTimeout(variantJobRef.current.pollTimeout);
+      variantJobRef.current = null;
+    }
+
+    setIsGeneratingVariant(true);
+    setVariantError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("slug", slug);
+      formData.append("generatedOutput", result.generatedOutput || "");
+      formData.append("prompt", result.prompt || "");
+
+      const imageUrls = result.images.map((img) => img.url).filter(Boolean);
+      if (imageUrls.length > 0) {
+        formData.append("imageUrls", JSON.stringify(imageUrls));
+      }
+
+      // Tell the worker to regenerate even if variant.png already exists.
+      formData.append("force", "true");
+
+      const response = await fetch("/api/generate-variant-image", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(`variant_regeneration_failed:${response.status}:${text}`);
+      }
+
+      const payload = await response.json().catch(() => null) as { variantImageUrl?: string } | null;
+      const variantUrl = payload?.variantImageUrl || `/api/images/${slug}/variant.png`;
+
+      setResult((prev) => (prev ? { ...prev, variantImageUrl: variantUrl } : prev));
+      setVariantCacheBust(Date.now());
+    } catch (e) {
+      console.warn("[ResultPage] Variant regeneration request failed:", e);
+      setVariantError(e instanceof Error ? e.message : "variant_regeneration_failed");
+    } finally {
+      setIsGeneratingVariant(false);
+    }
+  }, [result, slug]);
+
   const handleVisitSuperwallClick = useCallback(() => {
     if (posthog) {
       posthog.capture(POSTHOG_EVENTS.VISIT_SUPERWALL_CLICKED, {
@@ -536,7 +589,7 @@ export function ResultPage({ slug }: ResultPageProps) {
 
   const controlImageUrl = result.images[0]?.url;
   const variantImageUrl = result.variantImageUrl
-    ? `${result.variantImageUrl}${result.variantImageUrl.includes('?') ? '&' : '?'}v=${variantCacheBust || 0}`
+    ? `${result.variantImageUrl}${result.variantImageUrl.includes('?') ? '&' : '?'}cb=${variantCacheBust || 0}`
     : undefined;
 
   const isContentTruncated = result.generatedOutput.length > 500 && !hasEmail();
@@ -659,12 +712,33 @@ export function ResultPage({ slug }: ResultPageProps) {
                   if (result.variantImageUrl) setIsCompareOpen(true);
                 }}
               >
-                <div className="text-xs uppercase tracking-wider text-slate-500">Variant (Beta)</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs uppercase tracking-wider text-slate-500">
+                    {isGeneratingVariant ? "Generating" : "Variant (Beta)"}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-auto w-auto p-0 border-0 hover:bg-transparent"
+                    aria-label="Regenerate variant"
+                    disabled={!variantImageUrl || isGeneratingVariant}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRegenerateVariant();
+                    }}
+                  >
+                    {isGeneratingVariant ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RotateCcw className="w-4 h-4" />
+                    )}
+                  </Button>
+                </div>
                 {variantImageUrl ? (
                   <img
                     src={variantImageUrl}
                     alt="Variant"
-                    className={`h-[300px] md:h-[400px] w-auto rounded-2xl border border-[0.5px] object-contain bg-white ${isMobile ? '' : 'cursor-pointer'}`}
+                    className={`h-[300px] md:h-[400px] w-auto rounded-2xl border border-[0.5px] object-contain bg-white ${isMobile ? '' : 'cursor-pointer'} ${isGeneratingVariant ? 'animate-pulse opacity-70' : ''}`}
                   />
                 ) : isGeneratingVariant ? (
                   <div
@@ -737,13 +811,15 @@ export function ResultPage({ slug }: ResultPageProps) {
                     </div>
                   </div>
                   <div>
-                    <div className="text-xs uppercase tracking-wider text-slate-500 py-3 text-center">Variant (Beta)</div>
+                    <div className="text-xs uppercase tracking-wider text-slate-500 py-3 text-center">
+                      {isGeneratingVariant ? "Generating…" : "Variant (Beta)"}
+                    </div>
                     <div className="flex items-center justify-center pb-4">
                       {result.variantImageUrl ? (
                         <img
                           src={variantImageUrl}
                           alt="Variant fullscreen"
-                          className="h-[80vh] w-auto max-w-full md:max-w-[48vw] object-contain bg-slate-50 rounded-xl border border-slate-200"
+                          className={`h-[80vh] w-auto max-w-full md:max-w-[48vw] object-contain bg-slate-50 rounded-xl border border-slate-200 ${isGeneratingVariant ? 'animate-pulse opacity-70' : ''}`}
                         />
                       ) : (
                         <div className="h-[80vh] w-auto max-w-full md:max-w-[48vw] aspect-[9/16] bg-slate-100 rounded-xl border border-slate-200 flex items-center justify-center animate-pulse">
@@ -787,7 +863,7 @@ export function ResultPage({ slug }: ResultPageProps) {
 
             <h1 className="text-4xl md:text-5xl font-bold text-slate-900 mb-3">{title}</h1>
             <p className="text-slate-600 md:text-lg">
-              Based on 1,824 lessons from 422 unique experiments run by <a className="text-brand-primary cursor-pointer underline " href="https://superwall.com?ref=paywallexperiments">Superwall.com</a>
+              Based on 1,824 lessons from 422 unique experiments run by <a className="text-brand-primary cursor-pointer underline " href="https://superwall.com?utm_source=paywallexperiments.com&ref=paywallexperiments">Superwall.com</a>
             </p>
             </div>
         </div>
@@ -842,7 +918,7 @@ export function ResultPage({ slug }: ResultPageProps) {
             variant="juicy"
           >
             <a 
-              href="https://superwall.com?ref=paywallexperiments" 
+              href="https://superwall.com?utm_source=paywallexperiments.com&ref=paywallexperiments" 
               target="_blank" 
               rel="noopener noreferrer"
               onClick={handleVisitSuperwallClick}

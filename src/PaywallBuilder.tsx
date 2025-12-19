@@ -563,7 +563,7 @@ export function PaywallBuilder() {
     
           {!isLoading && (
             <p className="text-slate-600 md:text-lg px-4">
-              Based on 1,824 lessons from 422 unique experiments run by <a className="text-brand-primary cursor-pointer underline " href="https://superwall.com?ref=paywallexperiments" target="_blank" rel="noopener noreferrer">Superwall.com</a>
+              Based on 1,824 lessons from 422 unique experiments run by <a className="text-brand-primary cursor-pointer underline " href="https://superwall.com?utm_source=paywallexperiments.com&ref=paywallexperiments" target="_blank" rel="noopener noreferrer">Superwall.com</a>
             </p>
           )}
         </div>

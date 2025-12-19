@@ -58,6 +58,74 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
+function tryParseJsonArray(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+async function imageUrlToDataUrl(
+  env: Bindings,
+  requestUrl: string,
+  rawUrl: string
+): Promise<{ dataUrl: string; contentType: string } | null> {
+  if (!rawUrl) return null;
+
+  // Already a data URL
+  if (rawUrl.startsWith('data:image/')) {
+    const match = rawUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/);
+    return { dataUrl: rawUrl, contentType: match?.[1] || 'image/jpeg' };
+  }
+
+  // If it's an /api/images/:slug/:filename URL (relative or absolute), read from R2 directly.
+  // This avoids any fetch/origin/caching weirdness and guarantees we include the bytes.
+  try {
+    const urlObj = rawUrl.startsWith('http')
+      ? new URL(rawUrl)
+      : new URL(rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`, requestUrl);
+
+    const match = urlObj.pathname.match(/^\/api\/images\/([^/]+)\/([^/]+)$/);
+    if (match?.[1] && match?.[2]) {
+      const slug = match[1];
+      const filename = match[2];
+      const key = `images/${slug}/${filename}`;
+      const object = await env.STORAGE.get(key);
+      if (!object) return null;
+      const contentType = object.httpMetadata?.contentType || 'image/jpeg';
+      const arrayBuffer = await object.arrayBuffer();
+      const base64 = arrayBufferToBase64(arrayBuffer);
+      const dataUrl = `data:${contentType};base64,${base64}`;
+      return { dataUrl, contentType };
+    }
+  } catch {
+    // fall through to fetch
+  }
+
+  // Fetch external URL and embed bytes
+  const requestOrigin = new URL(requestUrl).origin;
+  const absoluteUrl = rawUrl.startsWith('/')
+    ? `${requestOrigin}${rawUrl}`
+    : rawUrl.startsWith('http')
+      ? rawUrl
+      : `${requestOrigin}/${rawUrl.replace(/^\/+/, '')}`;
+
+  const imgRes = await fetch(absoluteUrl, {
+    headers: {
+      'Accept': 'image/*,*/*;q=0.8',
+    },
+  });
+  if (!imgRes.ok) return null;
+  const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
+  const arrayBuffer = await imgRes.arrayBuffer();
+  const base64 = arrayBufferToBase64(arrayBuffer);
+  const dataUrl = `data:${contentType};base64,${base64}`;
+  return { dataUrl, contentType };
+}
+
 function extractBase64ImageFromOpenAIResponse(response: any): { base64: string; mimeType: string } | null {
   // OpenRouter Responses API: look for a completed image_generation_call with a data URL result
   const output = response?.output;
@@ -428,6 +496,7 @@ app.post('/api/generate-variant-image', async (c) => {
     const slug = String(formData.get("slug") || "").trim();
     const generatedOutput = String(formData.get("generatedOutput") || formData.get("experiment") || "").trim();
     const userPrompt = String(formData.get("prompt") || "").trim();
+    const force = String(formData.get("force") || "").trim().toLowerCase() === "true";
 
     if (!slug) {
       return c.json({ error: "slug_required" }, 400);
@@ -439,10 +508,22 @@ app.post('/api/generate-variant-image', async (c) => {
     // If already generated, return quickly
     const variantKey = `images/${slug}/variant.png`;
     const existingVariant = await env.STORAGE.get(variantKey);
-    if (existingVariant) {
-      const variantImageUrl = `/api/images/${slug}/variant.png`;
+    if (existingVariant && !force) {
+      // Prefer the stored URL (may include cache-busting query params)
+      let variantImageUrl = `/api/images/${slug}/variant.png`;
+      try {
+        const existingResult = await getResultFromR2(env.STORAGE, slug);
+        if (existingResult?.variantImageUrl) {
+          variantImageUrl = existingResult.variantImageUrl;
+        }
+      } catch {
+        // Best-effort; fall back to default URL
+      }
       console.log("[Worker] Variant image already exists for slug:", slug);
       return c.json({ variantImageUrl, cached: true });
+    }
+    if (existingVariant && force) {
+      console.log("[Worker] Force-regenerating variant image for slug:", slug);
     }
 
     // Collect images (same as /api/generate)
@@ -453,14 +534,14 @@ app.post('/api/generate-variant-image', async (c) => {
     }
 
     const imageUrlsJson = formData.get("imageUrls") as string | null;
-    const imageUrls: string[] = imageUrlsJson ? JSON.parse(imageUrlsJson) : [];
+    const imageUrls: string[] = tryParseJsonArray(imageUrlsJson);
 
     // Build OpenRouter Responses API input (message items with input_text/input_image parts)
     const input: any[] = [];
     const mainContent: any[] = [];
 
     const timelineInstructions = generatedOutput.toLowerCase().includes("timeline")
-      ? `- A trial timeline, if asked to generate one, is usually laid out vertically, like a quiet progress indicator.
+      ? `- A trial timeline, if asked to generate one, should be laid out vertically, like a quiet progress indicator, and towards the top of the paywall, not the bottom.
 
 <timeline-description>
 There's a single vertical line running down the left side. Along that line sit evenly spaced icons, one per step. Each marker represents a moment in time.
@@ -480,9 +561,30 @@ The whole thing should read at a glance as "now → soon → later," without nee
 Task: Generate a single polished Variant paywall screenshot based on the provided Control screenshot(s) and the recommended experiment write-up
 - Keep typography and spacing clean, ensure copy is readable
 - Stay consistent with the Control app's style
+- whitespace should be evenly distributed throughout the image, do not have high density of text or images localized to one area
 - Output: image only (no extra text)
 - respond with only 1 image, not a sequence, grid, or film strip of images
-${timelineInstructions ? "\n" + timelineInstructions : ""}`
+- product and plan selectors, if included, should be directly above the main purchase button, not below it
+- product and plan selectors should always be on the bottom half of the paywall, not the top half
+- always place the main purchase button at the bottom of the paywall, never inline or at the top half of the paywall
+- when designing a product selector, only include one badge (at most) per plan
+- feel free to remove / alter images and headers to make space for other items and to maintain a clean and readable design with uniform spacing
+${timelineInstructions ? "\n" + timelineInstructions : ""}
+
+For example, from top to bottom here's a valid layout:
+
+<paywall>
+  <header/> (optional)
+  <title/> (required)
+  <description/> (optional)
+  <timeline | checklist | graphic | etc./> (optional)
+  <product-selector/> (optional)      // or plan selector, same thing. Three options max.
+  <cta | subtitle text/> (optional)
+  <purchase button/> (required)
+  <cta | subtitle text/> (optional)
+</paywall>
+
+`
 
     const textParts: string[] = [instructions];
     if (userPrompt) textParts.push(`User prompt:\n${userPrompt}`);
@@ -505,48 +607,33 @@ ${timelineInstructions ? "\n" + timelineInstructions : ""}`
       });
     }
 
-    // Add URL images as input_image parts (direct URL)
-    // OpenRouter model execution may not be able to fetch relative/private URLs, so we fetch each URL in the Worker
-    // and embed it as a data URL.
-    const requestOrigin = new URL(c.req.url).origin;
+    // Add URL images as input_image parts (embed as data URLs, preferring direct R2 reads for /api/images/*)
+    let embeddedCount = 0;
     for (const rawUrl of imageUrls) {
       try {
-        if (!rawUrl) continue;
-
-        // If it's already a data URL, include as-is
-        if (rawUrl.startsWith("data:image/")) {
-          mainContent.push({
-            type: "input_image",
-            image_url: rawUrl,
-            detail: "auto",
-          });
+        const embedded = await imageUrlToDataUrl(env, c.req.url, rawUrl);
+        if (!embedded) {
+          console.warn("[Worker] Could not embed imageUrl for variant generation:", rawUrl);
           continue;
         }
-
-        const absoluteUrl = rawUrl.startsWith("/")
-          ? `${requestOrigin}${rawUrl}`
-          : rawUrl;
-
-        const imgRes = await fetch(absoluteUrl);
-        if (!imgRes.ok) {
-          console.warn("[Worker] Failed to fetch imageUrl for variant generation:", absoluteUrl, imgRes.status);
-          continue;
-        }
-
-        const contentType = imgRes.headers.get("content-type") || "image/jpeg";
-        const arrayBuffer = await imgRes.arrayBuffer();
-        const base64 = arrayBufferToBase64(arrayBuffer);
-        const dataUrl = `data:${contentType};base64,${base64}`;
 
         mainContent.push({
           type: "input_image",
-          image_url: dataUrl,
+          image_url: embedded.dataUrl,
           detail: "auto",
         });
+        embeddedCount++;
       } catch (e) {
         console.warn("[Worker] Error embedding imageUrl for variant generation:", rawUrl, e);
       }
     }
+
+    console.log("[Worker] Variant generation inputs:", {
+      slug,
+      fileImages: images.length,
+      imageUrls: imageUrls.length,
+      embeddedFromUrls: embeddedCount,
+    });
 
     input.push({
       role: "user",
@@ -595,7 +682,8 @@ ${timelineInstructions ? "\n" + timelineInstructions : ""}`
     const imageBuffer = base64ToArrayBuffer(extracted.base64);
     await saveNamedImageToR2(env.STORAGE, slug, "variant.png", imageBuffer, mimeType);
 
-    const variantImageUrl = `/api/images/${slug}/variant.png`;
+    // Persist a cache-busting param so page refreshes show the latest bytes.
+    const variantImageUrl = `/api/images/${slug}/variant.png?v=${Date.now()}`;
 
     // Update stored result JSON (best-effort)
     try {
